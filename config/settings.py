@@ -94,3 +94,6 @@ SLACK_APP_TOKEN = env("SLACK_APP_TOKEN", default="")
 
 # GitHub
 GITHUB_WEBHOOK_SECRET = env("GITHUB_WEBHOOK_SECRET", default="")
+
+# Tracker API
+TRACKER_API_TOKEN = env("TRACKER_API_TOKEN", default="")
