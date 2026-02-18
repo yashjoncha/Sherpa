@@ -2,24 +2,6 @@
 
 from __future__ import annotations
 
-PRIORITY_EMOJI = {
-    "critical": ":red_circle:",
-    "high": ":large_orange_circle:",
-    "medium": ":large_yellow_circle:",
-    "low": ":large_green_circle:",
-}
-
-STATUS_EMOJI = {
-    "open": ":inbox_tray:",
-    "in_progress": ":hammer_and_wrench:",
-    "in progress": ":hammer_and_wrench:",
-    "review": ":eyes:",
-    "in_review": ":eyes:",
-    "in review": ":eyes:",
-    "done": ":white_check_mark:",
-    "closed": ":white_check_mark:",
-}
-
 
 def format_ticket_summary(title: str, status: str, assignee: str) -> list[dict]:
     """Format a ticket summary as Block Kit blocks.
@@ -32,69 +14,7 @@ def format_ticket_summary(title: str, status: str, assignee: str) -> list[dict]:
     Returns:
         A list of Block Kit block dicts.
     """
-    status_icon = STATUS_EMOJI.get(status.lower(), ":grey_question:")
-    return [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*{title}*\n{status_icon} {status}  •  :bust_in_silhouette: {assignee}",
-            },
-        },
-    ]
-
-
-def format_tickets_response(tickets: list[dict]) -> list[dict]:
-    """Format a list of tickets as a full Block Kit message.
-
-    Args:
-        tickets: List of ticket dicts from the tracker API.
-
-    Returns:
-        A list of Block Kit block dicts ready for Slack.
-    """
-    blocks: list[dict] = [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": f":ticket: Your Tickets ({len(tickets)})",
-                "emoji": True,
-            },
-        },
-        {"type": "divider"},
-    ]
-
-    for ticket in tickets:
-        title = ticket.get("title", "Untitled")
-        status = ticket.get("status", "unknown")
-        priority = ticket.get("priority", "medium")
-        assignee = ticket.get("assignee", "Unassigned")
-        ticket_id = ticket.get("id", "")
-
-        # Handle assignee as dict or string
-        if isinstance(assignee, dict):
-            assignee = assignee.get("username") or assignee.get("name", "Unassigned")
-
-        priority_icon = PRIORITY_EMOJI.get(priority.lower(), ":white_circle:")
-        status_icon = STATUS_EMOJI.get(status.lower(), ":grey_question:")
-
-        blocks.append(
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": (
-                        f"*#{ticket_id} — {title}*\n"
-                        f"{status_icon} `{status}`  {priority_icon} `{priority}`  "
-                        f":bust_in_silhouette: {assignee}"
-                    ),
-                },
-            }
-        )
-        blocks.append({"type": "divider"})
-
-    return blocks
+    return []
 
 
 def format_sprint_report(sprint_name: str, stats: dict) -> list[dict]:
@@ -132,12 +52,4 @@ def format_error_message(error: str) -> list[dict]:
     Returns:
         A list of Block Kit block dicts.
     """
-    return [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f":warning: *Something went wrong*\n{error}",
-            },
-        },
-    ]
+    return []
