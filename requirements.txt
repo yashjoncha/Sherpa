@@ -9,3 +9,5 @@ slack-sdk>=3.33,<3.34
 gunicorn>=23.0,<24.0
 requests>=2.32,<2.33
 httpx>=0.28,<0.29
+sentence-transformers>=3.3,<4.0
+faiss-cpu>=1.9,<2.0

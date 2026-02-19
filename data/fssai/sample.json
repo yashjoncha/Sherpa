@@ -1,0 +1,23 @@
+[
+  {
+    "id": "FSSAI-001",
+    "title": "Food Safety and Standards (Licensing and Registration of Food Businesses) Regulations, 2011",
+    "category": "licensing",
+    "content": "Every Food Business Operator in the country is required to be licensed or registered under the Food Safety and Standards Authority of India. The type of license depends on the nature and size of the food business. Central License is required for large manufacturers, importers, and operators in central government agencies. State License is required for medium-sized manufacturers, storage units, transporters, retailers, marketers, and distributors. Registration is required for small food business operators like petty manufacturers, retailers, hawkers, itinerant vendors, and temporary stall holders.",
+    "source": "FSSAI Regulations 2011"
+  },
+  {
+    "id": "FSSAI-002",
+    "title": "Food Safety and Standards (Food Products Standards and Food Additives) Regulations",
+    "category": "standards",
+    "content": "These regulations specify the standards for various food products including dairy products, fats and oils, fruit and vegetable products, cereal products, meat and meat products, fish and fish products, sweets and confectionery, honey, and other food products. Each product category has defined parameters for quality, composition, and permissible limits of contaminants and additives.",
+    "source": "FSSAI Food Product Standards"
+  },
+  {
+    "id": "FSSAI-003",
+    "title": "FSSAI Labeling Requirements",
+    "category": "labeling",
+    "content": "Every prepackaged food shall carry a label containing the name of the food, list of ingredients, nutritional information, declaration regarding vegetarian or non-vegetarian food, declaration regarding food allergens, name and complete address of the manufacturer, net quantity, batch or lot number, date of manufacture and best before or use by date, and FSSAI license number. The label shall be in English or Hindi in Devnagari script.",
+    "source": "FSSAI Labeling Regulations"
+  }
+]
