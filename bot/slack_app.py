@@ -17,6 +17,7 @@ from integrations.slack_format import (
 )
 from integrations.tracker import (
     TrackerAPIError,
+    get_all_tickets,
     get_stale_tickets,
     get_ticket_detail,
     get_ticket_summary,
@@ -109,17 +110,44 @@ def handle_link(ack, respond, command):
 def handle_ticket(ack, respond, command):
     ack()
 
-    ticket_id = command.get("text", "").strip()
+    try:
+        tickets = get_all_tickets()
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error fetching all tickets: %s", exc)
+        respond(blocks=format_error_message(
+            "The tracker returned an error. Please try again later."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for all tickets")
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    if not tickets:
+        respond(blocks=format_no_tickets())
+        return
+
+    respond(blocks=format_tickets_response(tickets, header=":ticket: All Tickets"))
+
+
+@app.command("/ticket-detail")
+def handle_ticket_detail(ack, respond, command):
+    ack()
+
+    ticket_id = command.get("text", "").strip().strip("<>")
+
     if not ticket_id:
         respond(blocks=format_error_message(
-            "Please provide a ticket ID.\nUsage: `/ticket <ticket-id>` (e.g. `BZ-42` or `42`)"
+            "Please provide a ticket ID.\nUsage: `/ticket-detail <ticket-id>`"
         ))
         return
 
     try:
         ticket = get_ticket_detail(ticket_id)
     except TrackerAPIError as exc:
-        logger.error("Tracker API error for ticket %s: %s", ticket_id, exc)
+        logger.error("Tracker API error fetching ticket %s: %s", ticket_id, exc)
         if exc.status_code == 404:
             respond(blocks=format_error_message(
                 f"Ticket `{ticket_id}` was not found."
