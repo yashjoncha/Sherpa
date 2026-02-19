@@ -45,27 +45,35 @@ def format_ticket_summary(title: str, status: str, priority: str) -> dict:
     }
 
 
-def format_tickets_response(tickets: list[dict]) -> list[dict]:
+def format_tickets_response(
+    tickets: list[dict],
+    header: str = ":ticket: Your Tickets",
+    max_shown: int = 20,
+) -> list[dict]:
     """Format a list of tickets as Block Kit blocks.
 
     Args:
         tickets: List of ticket dicts with ``title``, ``status``, ``priority``.
+        header: Header text (emoji shortcodes allowed). The ticket count is
+            appended automatically.
+        max_shown: Maximum number of tickets to display. Slack allows at most
+            50 blocks per message; 20 tickets ≈ 42 blocks.
 
     Returns:
         A list of Block Kit block dicts with header, dividers, and ticket sections.
     """
-    count = len(tickets)
+    total = len(tickets)
     blocks: list[dict] = [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f":ticket: Your Tickets ({count})",
+                "text": f"{header} ({total})",
                 "emoji": True,
             },
         },
     ]
-    for ticket in tickets:
+    for ticket in tickets[:max_shown]:
         blocks.append({"type": "divider"})
         blocks.append(
             format_ticket_summary(
@@ -74,6 +82,13 @@ def format_tickets_response(tickets: list[dict]) -> list[dict]:
                 priority=ticket.get("priority", "unknown"),
             )
         )
+    if total > max_shown:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"Showing {max_shown} of {total} tickets."},
+            ],
+        })
     return blocks
 
 
@@ -183,10 +198,24 @@ def format_ticket_detail(ticket: dict) -> list[dict]:
     if ticket.get("sprint"):
         fields.append({"type": "mrkdwn", "text": f"*Sprint:* {ticket['sprint']}"})
     if ticket.get("assignees"):
-        assignees = ", ".join(ticket["assignees"]) if isinstance(ticket["assignees"], list) else ticket["assignees"]
+        assignee_list = ticket["assignees"]
+        if isinstance(assignee_list, list):
+            assignees = ", ".join(
+                a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
+                for a in assignee_list
+            )
+        else:
+            assignees = str(assignee_list)
         fields.append({"type": "mrkdwn", "text": f"*Assignees:* {assignees}"})
     if ticket.get("labels"):
-        labels = ", ".join(ticket["labels"]) if isinstance(ticket["labels"], list) else ticket["labels"]
+        label_list = ticket["labels"]
+        if isinstance(label_list, list):
+            labels = ", ".join(
+                l.get("name", str(l)) if isinstance(l, dict) else str(l)
+                for l in label_list
+            )
+        else:
+            labels = str(label_list)
         fields.append({"type": "mrkdwn", "text": f"*Labels:* {labels}"})
     if fields:
         blocks.append({"type": "section", "fields": fields})
@@ -255,23 +284,24 @@ def format_summary(summary: dict) -> list[dict]:
     ]
 
 
-def format_stale_tickets(tickets: list[dict], days: int) -> list[dict]:
+def format_stale_tickets(tickets: list[dict], days: int, max_shown: int = 20) -> list[dict]:
     """Format stale tickets as Block Kit blocks.
 
     Args:
         tickets: List of stale ticket dicts.
         days: The staleness threshold in days.
+        max_shown: Maximum number of tickets to display.
 
     Returns:
         A list of Block Kit block dicts.
     """
-    count = len(tickets)
+    total = len(tickets)
     blocks: list[dict] = [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f":cobweb: Stale Tickets — no updates in {days}+ days ({count})",
+                "text": f":cobweb: Stale Tickets — no updates in {days}+ days ({total})",
                 "emoji": True,
             },
         },
@@ -284,7 +314,7 @@ def format_stale_tickets(tickets: list[dict], days: int) -> list[dict]:
         })
         return blocks
 
-    for ticket in tickets:
+    for ticket in tickets[:max_shown]:
         blocks.append({"type": "divider"})
         blocks.append(
             format_ticket_summary(
@@ -293,6 +323,14 @@ def format_stale_tickets(tickets: list[dict], days: int) -> list[dict]:
                 priority=ticket.get("priority", "unknown"),
             )
         )
+
+    if total > max_shown:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"Showing {max_shown} of {total} stale tickets."},
+            ],
+        })
 
     return blocks
 

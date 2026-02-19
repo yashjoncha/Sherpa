@@ -141,7 +141,8 @@ def get_ticket_detail(ticket_id: str) -> dict:
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
 
-    return response.json()
+    data = response.json()
+    return data.get("ticket", data)
 
 
 def get_stale_tickets(days: int = 3) -> list[dict]:
