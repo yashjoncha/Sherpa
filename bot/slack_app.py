@@ -85,14 +85,8 @@ VALID_STATUSES = [
 def handle_link(ack, respond, command):
     ack()
 
-    username = command.get("text", "").strip()
-    if not username:
-        respond(blocks=format_error_message(
-            "Please provide your tracker username.\nUsage: `/link <tracker-username>`"
-        ))
-        return
-
     user_id = command["user_id"]
+    username = command["user_name"]
     try:
         mapping, created = link_user(user_id, username)
     except TrackerAPIError as exc:
