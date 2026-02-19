@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 from django.conf import settings
 
 logger = logging.getLogger("integrations.tracker")
+
+
+def _tracker_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
 
 
 class TrackerAPIError(Exception):
@@ -19,35 +24,102 @@ class TrackerAPIError(Exception):
         super().__init__(f"Tracker API error {status_code}: {detail}")
 
 
+def get_projects() -> list[dict]:
+    """Fetch all projects from the Tracker API."""
+    url = f"{settings.TRACKER_API_URL}/api/projects/"
+    response = httpx.get(url, headers=_tracker_headers(), timeout=10)
+    if response.status_code != 200:
+        raise TrackerAPIError(response.status_code, response.text)
+    data = response.json()
+    return data.get("projects", data)
+
+
+def get_sprints() -> list[dict]:
+    """Fetch all sprints from the Tracker API."""
+    url = f"{settings.TRACKER_API_URL}/api/sprints/"
+    response = httpx.get(url, headers=_tracker_headers(), timeout=10)
+    if response.status_code != 200:
+        raise TrackerAPIError(response.status_code, response.text)
+    data = response.json()
+    return data.get("sprints", data)
+
+
+def _slugify(text: str) -> str:
+    """Strip non-alphanumeric chars and lowercase for fuzzy comparison."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def resolve_project_name(name: str) -> int | None:
+    """Resolve a project name to its ID via fuzzy case-insensitive match."""
+    projects = get_projects()
+    slug = _slugify(name)
+    for p in projects:
+        p_name = p.get("title") or p.get("name") or ""
+        if _slugify(p_name) == slug:
+            return p["id"]
+    return None
+
+
+def resolve_sprint_name(name: str) -> int | None:
+    """Resolve a sprint name to its ID via case-insensitive match.
+
+    The special values ``"current"`` and ``"active"`` return the sprint
+    with ``status == "active"`` from the API.
+    """
+    sprints = get_sprints()
+    lower = name.lower()
+
+    if lower in ("current", "active"):
+        for s in sprints:
+            if s.get("status") == "active":
+                return s["id"]
+        return None
+
+    slug = _slugify(name)
+    for s in sprints:
+        if _slugify(s.get("name", "")) == slug:
+            return s["id"]
+    return None
+
+
 def get_tickets_for_user(
     slack_user_id: str,
     status: str | None = None,
     priority: str | None = None,
+    project: int | None = None,
+    sprint: int | None = None,
+    labels: str | None = None,
+    unassigned: bool | None = None,
+    updated_after: str | None = None,
+    updated_before: str | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
 ) -> list[dict]:
-    """Fetch tickets assigned to a Slack user from the Tracker API.
-
-    Args:
-        slack_user_id: The Slack user ID (e.g. ``U0AGM5ZLKG8``).
-        status: Optional status filter (e.g. ``open``, ``in_progress``).
-        priority: Optional priority filter (e.g. ``high``, ``critical``).
-
-    Returns:
-        A list of ticket dicts from the API.
-
-    Raises:
-        TrackerAPIError: If the API returns a non-2xx status.
-        httpx.ConnectError: If the tracker is unreachable.
-    """
+    """Fetch tickets assigned to a Slack user from the Tracker API."""
     params: dict[str, str] = {"slack_user_id": slack_user_id}
     if status:
         params["status"] = status
     if priority:
         params["priority"] = priority
+    if project is not None:
+        params["project"] = str(project)
+    if sprint is not None:
+        params["sprint"] = str(sprint)
+    if labels:
+        params["labels"] = labels
+    if unassigned is not None:
+        params["unassigned"] = str(unassigned).lower()
+    if updated_after:
+        params["updated_after"] = updated_after
+    if updated_before:
+        params["updated_before"] = updated_before
+    if created_after:
+        params["created_after"] = created_after
+    if created_before:
+        params["created_before"] = created_before
 
     url = f"{settings.TRACKER_API_URL}/api/my-tickets/"
-    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
-
-    response = httpx.get(url, params=params, headers=headers, timeout=10)
+    response = httpx.get(url, params=params, headers=_tracker_headers(), timeout=10)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -88,30 +160,43 @@ def link_user(slack_user_id: str, username: str) -> tuple[dict, bool]:
 def get_all_tickets(
     status: str | None = None,
     priority: str | None = None,
+    project: int | None = None,
+    sprint: int | None = None,
+    labels: str | None = None,
+    assignee: str | None = None,
+    unassigned: bool | None = None,
+    updated_after: str | None = None,
+    updated_before: str | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
 ) -> list[dict]:
-    """Fetch all tickets from the Tracker API.
-
-    Args:
-        status: Optional status filter (e.g. ``todo``, ``in_progress``).
-        priority: Optional priority filter (e.g. ``high``, ``critical``).
-
-    Returns:
-        A list of ticket dicts from the API.
-
-    Raises:
-        TrackerAPIError: If the API returns a non-2xx status.
-        httpx.ConnectError: If the tracker is unreachable.
-    """
+    """Fetch all tickets from the Tracker API."""
     params: dict[str, str] = {}
     if status:
         params["status"] = status
     if priority:
         params["priority"] = priority
+    if project is not None:
+        params["project"] = str(project)
+    if sprint is not None:
+        params["sprint"] = str(sprint)
+    if labels:
+        params["labels"] = labels
+    if assignee:
+        params["assignee"] = assignee
+    if unassigned is not None:
+        params["unassigned"] = str(unassigned).lower()
+    if updated_after:
+        params["updated_after"] = updated_after
+    if updated_before:
+        params["updated_before"] = updated_before
+    if created_after:
+        params["created_after"] = created_after
+    if created_before:
+        params["created_before"] = created_before
 
     url = f"{settings.TRACKER_API_URL}/api/tickets/"
-    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
-
-    response = httpx.get(url, params=params, headers=headers, timeout=10)
+    response = httpx.get(url, params=params, headers=_tracker_headers(), timeout=10)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)

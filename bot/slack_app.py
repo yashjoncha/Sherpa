@@ -25,6 +25,8 @@ from integrations.tracker import (
     get_ticket_summary,
     get_tickets_for_user,
     link_user,
+    resolve_project_name,
+    resolve_sprint_name,
     update_ticket,
 )
 
@@ -277,6 +279,56 @@ def handle_stale(ack, respond, command):
 
 
 # ---------------------------------------------------------------------------
+# Natural-language normalization helpers
+# ---------------------------------------------------------------------------
+
+_STATUS_MAP = {
+    "planning": "planning",
+    "todo": "todo", "to do": "todo", "to-do": "todo",
+    "open": None,  # vague — user means "active", not a real status
+    "in progress": "in_progress", "in_progress": "in_progress", "inprogress": "in_progress",
+    "in review": "in_review", "in_review": "in_review", "inreview": "in_review",
+    "review": "review",
+    "done": "done",
+    "completed": "completed", "complete": "completed",
+    "closed": "closed",
+    "blocked": "blocked",
+}
+
+_PRIORITY_MAP = {
+    "low": "low",
+    "medium": "medium", "med": "medium", "p2": "medium",
+    "high": "high", "p1": "high",
+    "critical": "critical", "crit": "critical", "p0": "critical",
+    "urgent": "critical",
+}
+
+_LABEL_MAP = {
+    "bug": "Bug", "bugs": "Bug",
+    "feature": "Feature", "features": "Feature",
+    "task": "Task", "tasks": "Task",
+    "raised by client": "Raised by client",
+}
+
+
+def _normalize_status(raw: str) -> str | None:
+    """Map user-spoken status to the API value, or None to skip."""
+    return _STATUS_MAP.get(raw.lower().strip())
+
+
+def _normalize_priority(raw: str) -> str | None:
+    """Map user-spoken priority to the API value."""
+    return _PRIORITY_MAP.get(raw.lower().strip())
+
+
+def _normalize_labels(raw: str) -> str:
+    """Map user-spoken labels to API-expected casing."""
+    parts = [l.strip() for l in raw.split(",")]
+    normalized = [_LABEL_MAP.get(p.lower(), p.title()) for p in parts if p]
+    return ",".join(normalized)
+
+
+# ---------------------------------------------------------------------------
 # Natural-language message / mention handlers
 # ---------------------------------------------------------------------------
 
@@ -303,17 +355,71 @@ def _handle_natural_message(text: str, user_id: str, say):
     result = classify_intent(clean)
     intent = result["intent"]
     params = result["params"]
+    logger.info("LLM classified: intent=%s, params=%s", intent, params)
+
+    # Resolve name-based filters to IDs for ticket list intents
+    filters: dict = {}
+    if intent in ("my_tickets", "all_tickets"):
+        project_name = params.get("project_name")
+
+        # Fallback: if LLM missed the project, try "in <name>" heuristic
+        if not project_name:
+            m = re.search(r"\bin\s+(\S+)", clean, re.IGNORECASE)
+            if m:
+                candidate = m.group(1)
+                pid = resolve_project_name(candidate)
+                if pid is not None:
+                    project_name = candidate
+                    logger.info("Heuristic caught project '%s' from text", candidate)
+
+        if project_name:
+            pid = resolve_project_name(project_name)
+            logger.info("Resolved project '%s' -> id=%s", project_name, pid)
+            if pid is not None:
+                filters["project"] = pid
+
+        sprint_name = params.get("sprint_name")
+        if sprint_name:
+            sid = resolve_sprint_name(sprint_name)
+            logger.info("Resolved sprint '%s' -> id=%s", sprint_name, sid)
+            if sid is not None:
+                filters["sprint"] = sid
+
+        raw_status = params.get("status")
+        if raw_status:
+            normalized = _normalize_status(raw_status)
+            if normalized:
+                filters["status"] = normalized
+
+        raw_priority = params.get("priority")
+        if raw_priority:
+            normalized = _normalize_priority(raw_priority)
+            if normalized:
+                filters["priority"] = normalized
+
+        raw_labels = params.get("labels")
+        if raw_labels:
+            filters["labels"] = _normalize_labels(raw_labels)
+
+        assigned_to = params.get("assigned_to")
+        if assigned_to:
+            filters["assignee"] = assigned_to
+
+        if params.get("unassigned") is True:
+            filters["unassigned"] = True
+
+        logger.info("Final API filters: %s", filters)
 
     try:
         if intent == "my_tickets":
-            tickets = get_tickets_for_user(user_id)
+            tickets = get_tickets_for_user(user_id, **filters)
             if not tickets:
                 say(blocks=format_no_tickets())
             else:
                 say(blocks=format_tickets_response(tickets))
 
         elif intent == "all_tickets":
-            tickets = get_all_tickets()
+            tickets = get_all_tickets(**filters)
             if not tickets:
                 say(blocks=format_no_tickets())
             else:
