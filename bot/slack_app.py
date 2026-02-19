@@ -8,10 +8,22 @@ from slack_bolt import App
 
 from integrations.slack_format import (
     format_error_message,
+    format_link_result,
     format_no_tickets,
+    format_stale_tickets,
+    format_summary,
+    format_ticket_detail,
     format_tickets_response,
 )
-from integrations.tracker import TrackerAPIError, get_tickets_for_user
+from integrations.tracker import (
+    TrackerAPIError,
+    get_stale_tickets,
+    get_ticket_detail,
+    get_ticket_summary,
+    get_tickets_for_user,
+    link_user,
+    update_ticket,
+)
 
 logger = logging.getLogger("bot")
 
@@ -61,3 +73,180 @@ def handle_tickets(ack, respond, command):
         return
 
     respond(blocks=format_tickets_response(tickets))
+
+
+VALID_STATUSES = [
+    "planning", "todo", "open", "in_progress", "in_review", "review",
+    "done", "completed", "closed", "blocked",
+]
+
+
+@app.command("/link-user")
+def handle_link(ack, respond, command):
+    ack()
+
+    username = command.get("text", "").strip()
+    if not username:
+        respond(blocks=format_error_message(
+            "Please provide your tracker username.\nUsage: `/link <tracker-username>`"
+        ))
+        return
+
+    user_id = command["user_id"]
+    try:
+        mapping, created = link_user(user_id, username)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error linking user %s: %s", user_id, exc)
+        respond(blocks=format_error_message(
+            "Could not link your account. Please check the username and try again."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for link user %s", user_id)
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    respond(blocks=format_link_result(mapping, created))
+
+
+@app.command("/ticket")
+def handle_ticket(ack, respond, command):
+    ack()
+
+    ticket_id = command.get("text", "").strip()
+    if not ticket_id:
+        respond(blocks=format_error_message(
+            "Please provide a ticket ID.\nUsage: `/ticket <ticket-id>` (e.g. `BZ-42` or `42`)"
+        ))
+        return
+
+    try:
+        ticket = get_ticket_detail(ticket_id)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error for ticket %s: %s", ticket_id, exc)
+        if exc.status_code == 404:
+            respond(blocks=format_error_message(
+                f"Ticket `{ticket_id}` was not found."
+            ))
+        else:
+            respond(blocks=format_error_message(
+                "The tracker returned an error. Please try again later."
+            ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for ticket %s", ticket_id)
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    respond(blocks=format_ticket_detail(ticket))
+
+
+@app.command("/update")
+def handle_update(ack, respond, command):
+    ack()
+
+    text = command.get("text", "").strip()
+    parts = text.split(None, 1)
+    if len(parts) < 2:
+        statuses = ", ".join(f"`{s}`" for s in VALID_STATUSES)
+        respond(blocks=format_error_message(
+            f"Please provide a ticket ID and status.\n"
+            f"Usage: `/update <ticket-id> <status>`\n"
+            f"Valid statuses: {statuses}"
+        ))
+        return
+
+    ticket_id, status = parts[0], parts[1].strip().lower()
+
+    if status not in VALID_STATUSES:
+        statuses = ", ".join(f"`{s}`" for s in VALID_STATUSES)
+        respond(blocks=format_error_message(
+            f"`{status}` is not a valid status.\nValid statuses: {statuses}"
+        ))
+        return
+
+    user_id = command["user_id"]
+    try:
+        update_ticket(ticket_id, status, user_id)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error updating ticket %s: %s", ticket_id, exc)
+        if exc.status_code == 404:
+            respond(blocks=format_error_message(
+                f"Ticket `{ticket_id}` was not found."
+            ))
+        else:
+            respond(blocks=format_error_message(
+                "The tracker returned an error. Please try again later."
+            ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for update %s", ticket_id)
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    s_label = status.replace("_", " ").title()
+    respond(
+        text=f":white_check_mark: Ticket `{ticket_id}` updated to *{s_label}*."
+    )
+
+
+@app.command("/summary")
+def handle_summary(ack, respond, command):
+    ack()
+
+    user_id = command["user_id"]
+    try:
+        summary = get_ticket_summary(user_id)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error for summary (user %s): %s", user_id, exc)
+        respond(blocks=format_error_message(
+            "The tracker returned an error. Please try again later."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for summary (user %s)", user_id)
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    respond(blocks=format_summary(summary))
+
+
+@app.command("/stale")
+def handle_stale(ack, respond, command):
+    ack()
+
+    text = command.get("text", "").strip()
+    days = 3
+    if text:
+        try:
+            days = int(text)
+        except ValueError:
+            respond(blocks=format_error_message(
+                "Please provide a valid number of days.\nUsage: `/stale [days]` (default: 3)"
+            ))
+            return
+
+    try:
+        tickets = get_stale_tickets(days)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error for stale tickets: %s", exc)
+        respond(blocks=format_error_message(
+            "The tracker returned an error. Please try again later."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for stale tickets")
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    respond(blocks=format_stale_tickets(tickets, days))
