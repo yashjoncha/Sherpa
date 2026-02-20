@@ -408,11 +408,13 @@ def _get_assignee_suggestion(ticket_id: str) -> list[dict]:
 
     if len(candidates) == 1:
         c = candidates[0]
+        similar = c.get("similar_tickets", [])
+        similar_note = f", worked on similar: {similar[0]['id']}" if similar else ""
         suggestion = {
             "assignee": c["name"],
             "reason": (
-                f"Only candidate — {c['project_tickets']} project tickets, "
-                f"{c['active_tickets']} active"
+                f"Only project member — {c['project_tickets']} project tickets, "
+                f"{c['active_tickets']} active{similar_note}"
             ),
             "alternative": "",
             "alt_reason": "",
@@ -426,7 +428,7 @@ def _get_assignee_suggestion(ticket_id: str) -> list[dict]:
         top = candidates[0]
         suggestion = {
             "assignee": top["name"],
-            "reason": "Highest relevance score based on project experience and workload",
+            "reason": "Highest relevance score based on similar ticket history and workload",
             "alternative": candidates[1]["name"] if len(candidates) > 1 else "",
             "alt_reason": "Second highest relevance score",
         }
