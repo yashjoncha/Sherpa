@@ -11,11 +11,11 @@ from bot.ai.llm import run_completion
 logger = logging.getLogger("bot.assignee")
 
 SUGGEST_ASSIGNEE_SYSTEM = """\
-You are a project-management assistant. Given a ticket description and a list of \
-team-member candidates with their workload stats, pick the best person to assign.
+You are a project-management assistant. Given a ticket and candidate project team \
+members with their workload and similar ticket history, pick the best person to assign.
 
-Consider: project experience, label/topic similarity, current workload (fewer active \
-tickets is better), and overall experience.
+Consider: who worked on similar tickets (strongest signal), current workload \
+(fewer active tickets is better), and overall project experience.
 
 Respond ONLY with a JSON object. No extra text.
 /no_think"""
@@ -102,11 +102,61 @@ def _extract_label_names(ticket: dict) -> set[str]:
     return result
 
 
+_STOPWORDS = frozenset({
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "can", "shall", "to", "of", "in", "for",
+    "on", "with", "at", "by", "from", "as", "into", "about", "not",
+    "and", "or", "but", "if", "then", "so", "than", "that", "this",
+    "it", "its", "we", "they", "them", "their", "our", "your", "my",
+    "i", "you", "he", "she", "me", "us", "no", "up", "out",
+})
+
+
+def _extract_keywords(text: str, max_keywords: int = 20) -> set[str]:
+    """Extract significant lowercase keywords from text."""
+    if not text:
+        return set()
+    words = re.findall(r"[a-zA-Z]{3,}", text.lower())
+    keywords = {w for w in words if w not in _STOPWORDS}
+    if len(keywords) > max_keywords:
+        seen: set[str] = set()
+        for w in words:
+            if w not in _STOPWORDS:
+                seen.add(w)
+                if len(seen) >= max_keywords:
+                    break
+        return seen
+    return keywords
+
+
+def _compute_ticket_similarity(
+    target_labels: set[str],
+    target_keywords: set[str],
+    other_ticket: dict,
+) -> tuple[float, list[str]]:
+    """Compute similarity between target ticket and another ticket.
+
+    Returns (score, matched_keywords_list).
+    """
+    other_labels = _extract_label_names(other_ticket)
+    label_score = len(target_labels & other_labels) * 2.0
+
+    other_text = (other_ticket.get("title") or "") + " " + (other_ticket.get("description") or "")
+    other_keywords = _extract_keywords(other_text)
+    matched = target_keywords & other_keywords
+    keyword_score = len(matched) * 1.0
+
+    return label_score + keyword_score, sorted(matched)[:3]
+
+
 def build_candidate_profiles(
     target_ticket: dict,
     all_tickets: list[dict],
 ) -> list[dict]:
     """Build per-assignee candidate profiles with workload and relevance stats.
+
+    Only considers candidates from the same project as the target ticket.
 
     Args:
         target_ticket: The ticket that needs an assignee.
@@ -115,52 +165,71 @@ def build_candidate_profiles(
     Returns:
         A list of candidate dicts sorted by relevance_score descending.
         Each dict contains: name, key, total_tickets, active_tickets,
-        project_tickets, label_overlap, relevance_score.
+        project_tickets, label_overlap, similarity_score, similar_tickets,
+        relevance_score.
     """
     target_project = _extract_project_name(target_ticket.get("project"))
     target_labels = _extract_label_names(target_ticket)
+    target_keywords = _extract_keywords(
+        (target_ticket.get("title") or "") + " " + (target_ticket.get("description") or "")
+    )
+
+    # Filter to same-project tickets only
+    if target_project:
+        tickets = [t for t in all_tickets if _extract_project_name(t.get("project")) == target_project]
+    else:
+        tickets = all_tickets
 
     candidates: dict[str, dict] = {}
 
-    for ticket in all_tickets:
+    for ticket in tickets:
         assignee_list = ticket.get("assignees")
         if not assignee_list:
             continue
         if not isinstance(assignee_list, list):
             assignee_list = [assignee_list]
 
-        status = (ticket.get("status") or "").lower()
-        ticket_project = _extract_project_name(ticket.get("project"))
-        ticket_labels = _extract_label_names(ticket)
+        raw_status = ticket.get("status") or ""
+        status = (raw_status.get("name") if isinstance(raw_status, dict) else str(raw_status)).lower()
+        sim_score, matched_kw = _compute_ticket_similarity(target_labels, target_keywords, ticket)
 
         for assignee in assignee_list:
             name, key = _extract_assignee_key(assignee)
             if key not in candidates:
                 candidates[key] = {
-                    "name": name,
-                    "key": key,
-                    "total_tickets": 0,
-                    "active_tickets": 0,
-                    "project_tickets": 0,
-                    "label_overlap": 0,
+                    "name": name, "key": key,
+                    "project_tickets": 0, "total_tickets": 0,
+                    "active_tickets": 0, "label_overlap": 0,
+                    "similarity_score": 0.0,
+                    "similar_tickets": [],
                 }
 
             c = candidates[key]
+            c["project_tickets"] += 1
             c["total_tickets"] += 1
 
             if status in ACTIVE_STATUSES:
                 c["active_tickets"] += 1
 
-            if target_project and ticket_project == target_project:
-                c["project_tickets"] += 1
-
+            ticket_labels = _extract_label_names(ticket)
             if target_labels and ticket_labels:
                 c["label_overlap"] += len(target_labels & ticket_labels)
 
+            if sim_score > 0:
+                c["similarity_score"] += sim_score
+                c["similar_tickets"].append({
+                    "id": ticket.get("id", "?"),
+                    "title": ticket.get("title", ""),
+                    "score": sim_score,
+                    "keywords": matched_kw,
+                })
+
+    # Sort each candidate's similar_tickets by score, keep top 3
     for c in candidates.values():
+        c["similar_tickets"] = sorted(c["similar_tickets"], key=lambda x: x["score"], reverse=True)[:3]
         c["relevance_score"] = (
-            c["project_tickets"] * 3
-            + c["label_overlap"] * 2
+            c["similarity_score"] * 3.0
+            + c["label_overlap"] * 2.0
             + c["total_tickets"] * 0.5
             - c["active_tickets"] * 1.5
         )
@@ -171,7 +240,7 @@ def build_candidate_profiles(
 def build_suggestion_prompt(
     target_ticket: dict,
     candidates: list[dict],
-    max_candidates: int = 6,
+    max_candidates: int = 5,
 ) -> str:
     """Build a compact LLM prompt for assignee suggestion.
 
@@ -185,34 +254,40 @@ def build_suggestion_prompt(
     """
     title = target_ticket.get("title", "Untitled")
     raw_project = target_ticket.get("project", "Unknown")
-    if isinstance(raw_project, dict):
-        project = raw_project.get("title") or raw_project.get("name") or "Unknown"
-    else:
-        project = str(raw_project) if raw_project else "Unknown"
-    priority = target_ticket.get("priority", "unknown")
+    project = _extract_project_name(raw_project) or "Unknown"
+    raw_priority = target_ticket.get("priority", "unknown")
+    priority = (raw_priority.get("name") if isinstance(raw_priority, dict) else str(raw_priority)) if raw_priority else "unknown"
     labels = _extract_label_names(target_ticket)
     labels_str = ", ".join(sorted(labels)) if labels else "none"
-    desc = (target_ticket.get("description") or "")[:80]
+    desc = (target_ticket.get("description") or "")[:100]
 
     lines = [
         f"Ticket: {title}",
         f"Project: {project} | Priority: {priority} | Labels: {labels_str}",
         f"Desc: {desc}",
         "",
-        "Candidates:",
+        f"Candidates (project members of {project}):",
     ]
 
-    for c in candidates[:max_candidates]:
+    for i, c in enumerate(candidates[:max_candidates], 1):
         lines.append(
-            f"- {c['name']}: {c['project_tickets']} project tickets, "
-            f"{c['label_overlap']} similar, {c['active_tickets']} active, "
-            f"{c['total_tickets']} total"
+            f"{i}. {c['name']} ({c['active_tickets']} active, {c['total_tickets']} total in project)"
         )
+        similar = c.get("similar_tickets", [])
+        if similar:
+            parts = []
+            for s in similar[:2]:
+                kw = ",".join(s["keywords"][:3]) if s["keywords"] else ""
+                short_title = s["title"][:30]
+                parts.append(f'{s["id"]} "{short_title}" [{kw}]')
+            lines.append(f"   Similar: {', '.join(parts)}")
+        else:
+            lines.append("   Similar: (none)")
 
     lines.append("")
     lines.append(
-        'Pick the best assignee. Respond ONLY with JSON: '
-        '{"assignee": "<name>", "reason": "...", "alternative": "<name>", "alt_reason": "..."}'
+        'Pick the best assignee considering similar ticket history and workload. '
+        'Respond ONLY with JSON: {"assignee": "<name>", "reason": "...", "alternative": "<name>", "alt_reason": "..."}'
     )
 
     return "\n".join(lines)
