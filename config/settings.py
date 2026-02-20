@@ -92,6 +92,9 @@ SLACK_BOT_TOKEN = env("SLACK_BOT_TOKEN", default="")
 SLACK_SIGNING_SECRET = env("SLACK_SIGNING_SECRET", default="")
 SLACK_APP_TOKEN = env("SLACK_APP_TOKEN", default="")
 
+# Sprint retro auto-post channel
+RETRO_SLACK_CHANNEL = env("RETRO_SLACK_CHANNEL", default="C0AFST8QY6N")
+
 # Tracker
 TRACKER_API_URL = env("TRACKER_API_URL", default="https://tracker.blaziken.in")
 TRACKER_API_TOKEN = env("TRACKER_API_TOKEN", default="")

@@ -520,18 +520,18 @@ def format_eod_summary(narrative: str, target_date: str, ticket_count: int, stat
 
 
 def format_sprint_retro(
-    narrative: str,
     sprint: dict,
     stats: dict,
     member_stats: list[dict],
+    tickets: list[dict],
 ) -> list[dict]:
     """Format a sprint retrospective report as Block Kit blocks.
 
     Args:
-        narrative: The LLM-generated retrospective narrative.
         sprint: Sprint dict with name, start_date, end_date.
         stats: Dict with total, completed, missed, points_completed, points_total, completion_rate.
         member_stats: List of dicts with name, completed, total, points.
+        tickets: List of ticket dicts for per-project breakdown.
 
     Returns:
         A list of Block Kit block dicts.
@@ -540,19 +540,12 @@ def format_sprint_retro(
     start = sprint.get("start_date", "?")
     end = sprint.get("end_date", "?")
     total = stats.get("total", 0)
-    completed = stats.get("completed", 0)
-    missed = stats.get("missed", 0)
     points_done = stats.get("points_completed", 0)
     points_total = stats.get("points_total", 0)
     rate = stats.get("completion_rate", 0)
-
-    # Status breakdown
     status_counts = stats.get("status_counts", {})
-    status_parts = []
-    for status, count in status_counts.items():
-        emoji = STATUS_EMOJI.get(status, ":grey_question:")
-        label = status.replace("_", " ").title()
-        status_parts.append(f"{emoji} {label}: *{count}*")
+
+    DONE = {"done", "completed", "closed"}
 
     blocks: list[dict] = [
         {
@@ -579,27 +572,85 @@ def format_sprint_retro(
         },
     ]
 
-    # Status breakdown bar
-    if status_parts:
+    # Sprint MVP — member with the most story points
+    if member_stats:
+        mvp = max(member_stats, key=lambda m: m.get("points", 0))
+        mvp_name = mvp.get("name", "Unknown")
+        mvp_points = mvp.get("points", 0)
+        mvp_done = mvp.get("completed", 0)
+        if mvp_points > 0:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f":star2: *Sprint MVP* — *{mvp_name}*  |  "
+                        f":dart: {mvp_points} pts  |  "
+                        f":white_check_mark: {mvp_done} ticket(s) completed"
+                    ),
+                },
+            })
+
+    blocks.append({"type": "divider"})
+
+    # Per-project breakdown
+    projects: dict[str, list[dict]] = {}
+    for t in tickets:
+        proj = t.get("project")
+        if isinstance(proj, dict):
+            proj_name = proj.get("title") or proj.get("name") or "Unassigned Project"
+        elif isinstance(proj, str) and proj:
+            proj_name = proj
+        else:
+            proj_name = "Unassigned Project"
+        projects.setdefault(proj_name, []).append(t)
+
+    for proj_name in sorted(projects):
+        proj_tickets = projects[proj_name]
+        done_tickets = [t for t in proj_tickets if t.get("status") in DONE]
+        pending_tickets = [t for t in proj_tickets if t.get("status") not in DONE]
+
         blocks.append({
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "  |  ".join(status_parts),
+                "text": f":pushpin: *{proj_name}* — {len(done_tickets)}/{len(proj_tickets)} completed",
             },
         })
 
-    blocks.append({"type": "divider"})
+        if done_tickets:
+            done_lines = []
+            for t in done_tickets:
+                tid = t.get("id", "?")
+                title = t.get("title", "Untitled")
+                done_lines.append(f":white_check_mark: `{tid}` {title}")
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": "\n".join(done_lines)},
+                ],
+            })
 
-    # LLM narrative
-    blocks.append({
-        "type": "section",
-        "text": {"type": "mrkdwn", "text": narrative},
-    })
+        if pending_tickets:
+            pending_lines = []
+            for t in pending_tickets:
+                tid = t.get("id", "?")
+                title = t.get("title", "Untitled")
+                status = t.get("status", "unknown")
+                s_emoji = STATUS_EMOJI.get(status, ":grey_question:")
+                label = status.replace("_", " ").title()
+                pending_lines.append(f"{s_emoji} `{tid}` {title} — _{label}_")
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": "\n".join(pending_lines)},
+                ],
+            })
+
+        blocks.append({"type": "divider"})
 
     # Team delivery leaderboard
     if member_stats:
-        blocks.append({"type": "divider"})
         blocks.append({
             "type": "section",
             "text": {
