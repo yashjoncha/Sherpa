@@ -87,6 +87,10 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 
+# Nudge / Escalation settings
+RISK_STALE_DAYS = env.int("RISK_STALE_DAYS", default=2)
+ESCALATION_PM_SLACK_IDS = env.list("ESCALATION_PM_SLACK_IDS", default=[])
+
 # Slack
 SLACK_BOT_TOKEN = env("SLACK_BOT_TOKEN", default="")
 SLACK_SIGNING_SECRET = env("SLACK_SIGNING_SECRET", default="")

@@ -768,6 +768,123 @@ def format_sprint_retro(
     return blocks
 
 
+def format_eod_reminder_dm(llm_narrative: str, tickets: list[dict]) -> list[dict]:
+    """Format an EOD reminder DM for a developer.
+
+    Args:
+        llm_narrative: LLM-generated personalized reminder text.
+        tickets: List of the developer's active ticket dicts.
+
+    Returns:
+        A list of Block Kit block dicts.
+    """
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ":bell: EOD Reminder",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": llm_narrative},
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "\n".join(
+                        f"{STATUS_EMOJI.get(t.get('status', ''), ':grey_question:')} <{settings.TRACKER_API_URL}/tasks/{t.get('id', '')}|`{t.get('id', '?')}`> {t.get('title', 'Untitled')}"
+                        for t in tickets
+                    ),
+                },
+            ],
+        },
+    ]
+    return blocks
+
+
+def _ticket_context_block(t: dict) -> dict:
+    """Build a context block for a single at-risk ticket."""
+    tid = t.get("id", "?")
+    title = t.get("title", "Untitled")
+    status = t.get("status", "unknown")
+    s_emoji = STATUS_EMOJI.get(status, ":grey_question:")
+    assignees = t.get("assignees", [])
+    if isinstance(assignees, list):
+        assignee_str = ", ".join(
+            a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
+            for a in assignees
+        ) or "Unassigned"
+    else:
+        assignee_str = str(assignees) or "Unassigned"
+    days_stale = t.get("days_since_update", "?")
+    return {
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": f"{s_emoji} <{settings.TRACKER_API_URL}/tasks/{tid}|`{tid}`> *{title}*  —  {assignee_str}  —  {days_stale}d since last update",
+            },
+        ],
+    }
+
+
+def format_risk_escalation_dm(
+    todo_tickets: list[dict],
+    stale_tickets: list[dict],
+) -> list[dict]:
+    """Format a risk escalation DM for the PM.
+
+    Args:
+        todo_tickets: Tickets stuck in todo for 2+ days, not picked up.
+        stale_tickets: In-progress tickets stuck for 2+ days.
+
+    Returns:
+        A list of Block Kit block dicts.
+    """
+    total = len(todo_tickets) + len(stale_tickets)
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f":warning: At-Risk Tickets ({total})",
+                "emoji": True,
+            },
+        },
+    ]
+
+    if todo_tickets:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":clipboard: *{len(todo_tickets)} not started* — sitting in todo for too long. Needs to be picked up, reassigned, or reprioritized.",
+            },
+        })
+        for t in todo_tickets:
+            blocks.append(_ticket_context_block(t))
+
+    if stale_tickets:
+        if todo_tickets:
+            blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":hourglass_flowing_sand: *{len(stale_tickets)} stale* — in progress with no recent updates. These could slip and delay the sprint.",
+            },
+        })
+        for t in stale_tickets:
+            blocks.append(_ticket_context_block(t))
+
+    return blocks
+
+
 def format_link_result(mapping: dict, created: bool) -> list[dict]:
     """Format the result of linking a Slack user to a tracker account.
 

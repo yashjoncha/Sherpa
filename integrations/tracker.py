@@ -362,3 +362,29 @@ def update_ticket(
         raise TrackerAPIError(response.status_code, response.text)
 
     return response.json()
+
+
+def get_slack_mappings() -> dict[str, str]:
+    """Fetch Slack user ID mappings keyed by tracker username.
+
+    Returns:
+        A dict mapping tracker username to Slack user ID.
+
+    Raises:
+        TrackerAPIError: If the API returns a non-2xx status.
+        httpx.ConnectError: If the tracker is unreachable.
+    """
+    url = f"{settings.TRACKER_API_URL}/api/slack-mappings/"
+    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
+
+    response = httpx.get(url, headers=headers, timeout=10)
+
+    if response.status_code != 200:
+        raise TrackerAPIError(response.status_code, response.text)
+
+    data = response.json()
+    return {
+        m["username"]: m["slack_user_id"]
+        for m in data.get("mappings", data)
+        if m.get("username") and m.get("slack_user_id")
+    }
