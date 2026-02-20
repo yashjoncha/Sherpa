@@ -7,8 +7,10 @@ import httpx
 from django.conf import settings
 from slack_bolt import App
 
+from bot.assignee import build_candidate_profiles, build_suggestion_prompt, suggest_assignee
 from bot.router import route
 from integrations.slack_format import (
+    format_assignee_suggestion,
     format_eod_summary,
     format_error_message,
     format_link_result,
@@ -199,7 +201,7 @@ def handle_update(ack, respond, command):
 
     user_id = command["user_id"]
     try:
-        update_ticket(ticket_id, status, user_id)
+        update_ticket(ticket_id, user_id, status=status)
     except TrackerAPIError as exc:
         logger.error("Tracker API error updating ticket %s: %s", ticket_id, exc)
         if exc.status_code == 404:
@@ -381,6 +383,93 @@ def handle_retro(ack, respond, command):
 
 
 # ---------------------------------------------------------------------------
+# Suggest assignee
+# ---------------------------------------------------------------------------
+
+# Regex to detect ticket-creation messages from the tracker bot.
+# Matches e.g. "Ticket BZ-63 'hi' created successfully!"
+_TICKET_CREATED_RE = re.compile(r"Ticket\s+(\S+)\s+.*created", re.IGNORECASE)
+
+
+def _get_assignee_suggestion(ticket_id: str) -> list[dict]:
+    """Run the assignee-suggestion pipeline and return Block Kit blocks.
+
+    Used by both the ``/suggest-assignee`` command and the automatic
+    trigger on ticket creation.
+    """
+    target_ticket = get_ticket_detail(ticket_id)
+    all_tickets = get_all_tickets()
+    candidates = build_candidate_profiles(target_ticket, all_tickets)
+
+    if not candidates:
+        return format_error_message(
+            f"No candidates found for `{ticket_id}`. All tickets appear to be unassigned."
+        )
+
+    if len(candidates) == 1:
+        c = candidates[0]
+        suggestion = {
+            "assignee": c["name"],
+            "reason": (
+                f"Only candidate — {c['project_tickets']} project tickets, "
+                f"{c['active_tickets']} active"
+            ),
+            "alternative": "",
+            "alt_reason": "",
+        }
+        return format_assignee_suggestion(target_ticket, suggestion, candidates)
+
+    prompt = build_suggestion_prompt(target_ticket, candidates)
+    suggestion = suggest_assignee(prompt)
+
+    if not suggestion.get("assignee"):
+        top = candidates[0]
+        suggestion = {
+            "assignee": top["name"],
+            "reason": "Highest relevance score based on project experience and workload",
+            "alternative": candidates[1]["name"] if len(candidates) > 1 else "",
+            "alt_reason": "Second highest relevance score",
+        }
+
+    return format_assignee_suggestion(target_ticket, suggestion, candidates)
+
+
+@app.command("/suggest-assignee")
+def handle_suggest_assignee(ack, respond, command):
+    ack()
+
+    ticket_id = command.get("text", "").strip().strip("<>")
+
+    if not ticket_id:
+        respond(blocks=format_error_message(
+            "Please provide a ticket ID.\nUsage: `/suggest-assignee <ticket-id>`"
+        ))
+        return
+
+    try:
+        blocks = _get_assignee_suggestion(ticket_id)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error for suggest-assignee %s: %s", ticket_id, exc)
+        if exc.status_code == 404:
+            respond(blocks=format_error_message(
+                f"Ticket `{ticket_id}` was not found."
+            ))
+        else:
+            respond(blocks=format_error_message(
+                "The tracker returned an error. Please try again later."
+            ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for suggest-assignee %s", ticket_id)
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    respond(blocks=blocks)
+
+
+# ---------------------------------------------------------------------------
 # Natural-language message / mention handlers
 # ---------------------------------------------------------------------------
 
@@ -393,12 +482,27 @@ def _handle_natural_message(text: str, user_id: str, say):
 
 @app.event("message")
 def handle_dm(event, say):
-    """Handle direct messages to the bot."""
-    # Ignore bot messages, message_changed events, etc.
-    if event.get("subtype"):
+    """Handle direct messages and detect ticket-creation bot messages."""
+    text = event.get("text", "")
+    subtype = event.get("subtype")
+
+    # Check for ticket-creation messages from the tracker bot
+    if subtype == "bot_message" or event.get("bot_id"):
+        match = _TICKET_CREATED_RE.search(text)
+        if match:
+            ticket_id = match.group(1)
+            logger.info("Auto-suggesting assignee for newly created %s", ticket_id)
+            try:
+                blocks = _get_assignee_suggestion(ticket_id)
+                say(blocks=blocks, thread_ts=event.get("ts"))
+            except (TrackerAPIError, httpx.ConnectError):
+                logger.exception("Auto-suggest failed for %s", ticket_id)
         return
 
-    text = event.get("text", "")
+    # Ignore other non-standard message subtypes
+    if subtype:
+        return
+
     user_id = event.get("user", "")
     _handle_natural_message(text, user_id, say)
 
@@ -409,3 +513,13 @@ def handle_mention(event, say):
     text = event.get("text", "")
     user_id = event.get("user", "")
     _handle_natural_message(text, user_id, say)
+
+
+# ---------------------------------------------------------------------------
+# Global error handler
+# ---------------------------------------------------------------------------
+
+
+@app.error
+def global_error_handler(error, body, logger):
+    logger.error("Unhandled error: %s | body: %s", error, body)

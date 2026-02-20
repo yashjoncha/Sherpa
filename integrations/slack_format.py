@@ -788,3 +788,99 @@ def format_link_result(mapping: dict, created: bool) -> list[dict]:
             "text": {"type": "mrkdwn", "text": text},
         },
     ]
+
+
+def format_assignee_suggestion(
+    ticket: dict,
+    suggestion: dict,
+    candidates: list[dict],
+) -> list[dict]:
+    """Format an AI assignee suggestion as Block Kit blocks.
+
+    Args:
+        ticket: The target ticket dict.
+        suggestion: Dict with ``assignee``, ``reason``, ``alternative``,
+            ``alt_reason`` from the LLM.
+        candidates: The full list of candidate profiles for the stats row.
+
+    Returns:
+        A list of Block Kit block dicts.
+    """
+    ticket_id = ticket.get("id", "unknown")
+    title = ticket.get("title", "Untitled")
+    project = ticket.get("project", "Unknown")
+    priority = (ticket.get("priority") or "unknown").lower()
+    p_emoji = PRIORITY_EMOJI.get(priority, ":grey_question:")
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f":dart: Assignee Suggestion for {ticket_id}",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Ticket:* {title}"},
+                {"type": "mrkdwn", "text": f"*Project:* {project}"},
+                {"type": "mrkdwn", "text": f"*Priority:* {p_emoji} {priority.title()}"},
+            ],
+        },
+        {"type": "divider"},
+    ]
+
+    # Primary recommendation
+    assignee = suggestion.get("assignee", "Unknown")
+    reason = suggestion.get("reason", "Best match based on relevance score")
+    blocks.append({
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f":star: *Recommended: {assignee}*\n{reason}",
+        },
+    })
+
+    # Alternative recommendation
+    alternative = suggestion.get("alternative", "")
+    alt_reason = suggestion.get("alt_reason", "")
+    if alternative:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":two: *Alternative: {alternative}*\n{alt_reason}" if alt_reason
+                    else f":two: *Alternative: {alternative}*",
+            },
+        })
+
+    # Team stats
+    if candidates:
+        blocks.append({"type": "divider"})
+        stats_parts = []
+        for c in candidates[:6]:
+            stats_parts.append(
+                f"{c['name']}: {c['project_tickets']}P {c['label_overlap']}S "
+                f"{c['active_tickets']}A {c['total_tickets']}T"
+            )
+        stats_text = "  |  ".join(stats_parts)
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*Team Stats* (P=Project, S=Similar, A=Active, T=Total)\n{stats_text}",
+            },
+        })
+
+    blocks.append({"type": "divider"})
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {"type": "mrkdwn", "text": ":robot_face: Sherpa AI Suggestion"},
+        ],
+    })
+
+    return blocks
