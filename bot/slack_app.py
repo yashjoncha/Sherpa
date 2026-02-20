@@ -310,50 +310,7 @@ def handle_eod(ack, respond, command):
         ))
         return
 
-    # Build status counts
-    status_counts: dict[str, int] = {}
-    for t in tickets:
-        status = t.get("status", "unknown")
-        status_counts[status] = status_counts.get(status, 0) + 1
-
-    # Prepare ticket data for the LLM
-    ticket_lines = []
-    for t in tickets:
-        tid = t.get("id", "?")
-        title = t.get("title", "Untitled")
-        status = t.get("status", "unknown")
-        priority = t.get("priority", "unknown")
-        assignees = t.get("assignees", [])
-        if isinstance(assignees, list):
-            names = ", ".join(
-                a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
-                for a in assignees
-            ) or "Unassigned"
-        else:
-            names = str(assignees) or "Unassigned"
-        ticket_lines.append(
-            f"- [{tid}] {title} | Status: {status} | Priority: {priority} | Assignees: {names}"
-        )
-
-    ticket_data = "\n".join(ticket_lines)
-
-    from bot.ai.llm import run_completion
-    from bot.ai.prompts import load_prompt
-
-    prompt = load_prompt("eod_summary")
-    prompt = prompt.replace("{date}", target_date)
-    prompt = prompt.replace("{ticket_data}", ticket_data)
-
-    try:
-        narrative = run_completion(prompt, "eod summary", max_tokens=400, temperature=0.3)
-    except Exception:
-        logger.exception("LLM failed for /eod command")
-        respond(blocks=format_error_message(
-            "I couldn't generate the EOD summary. Please try again."
-        ))
-        return
-
-    respond(blocks=format_eod_summary(narrative, target_date, len(tickets), status_counts))
+    respond(blocks=format_eod_summary(target_date, tickets))
 
 
 @app.command("/retro")

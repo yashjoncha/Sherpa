@@ -287,43 +287,7 @@ def handle_eod_summary(message: str, user_id: str, params: dict, say) -> None:
         say(blocks=format_error_message(f"No ticket activity found for *{target_date}*."))
         return
 
-    # Build status counts
-    status_counts: dict[str, int] = {}
-    for t in tickets:
-        status = t.get("status", "unknown")
-        status_counts[status] = status_counts.get(status, 0) + 1
-
-    # Prepare ticket data for the LLM
-    ticket_lines = []
-    for t in tickets:
-        tid = t.get("id", "?")
-        title = t.get("title", "Untitled")
-        status = t.get("status", "unknown")
-        priority = t.get("priority", "unknown")
-        assignees = t.get("assignees", [])
-        if isinstance(assignees, list):
-            names = ", ".join(
-                a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
-                for a in assignees
-            ) or "Unassigned"
-        else:
-            names = str(assignees) or "Unassigned"
-        ticket_lines.append(f"- [{tid}] {title} | Status: {status} | Priority: {priority} | Assignees: {names}")
-
-    ticket_data = "\n".join(ticket_lines)
-
-    prompt = load_prompt("eod_summary")
-    prompt = prompt.replace("{date}", target_date)
-    prompt = prompt.replace("{ticket_data}", ticket_data)
-
-    try:
-        narrative = run_completion(prompt, message, max_tokens=400, temperature=0.3)
-    except Exception:
-        logger.exception("LLM failed for eod_summary")
-        say(blocks=format_error_message("I couldn't generate the EOD summary. Please try again."))
-        return
-
-    say(blocks=format_eod_summary(narrative, target_date, len(tickets), status_counts))
+    say(blocks=format_eod_summary(target_date, tickets))
 
 
 DONE_STATUSES = {"done", "completed", "closed"}

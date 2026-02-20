@@ -474,48 +474,111 @@ def format_sprint_health(analysis: str, sprint_info: dict) -> list[dict]:
     return blocks
 
 
-def format_eod_summary(narrative: str, target_date: str, ticket_count: int, status_counts: dict) -> list[dict]:
+def format_eod_summary(target_date: str, tickets: list[dict], project_name: str = "") -> list[dict]:
     """Format an EOD summary report as Block Kit blocks.
 
+    Groups tickets by status and lists them with IDs. Computes all
+    counts internally from the ticket list (no LLM needed).
+
     Args:
-        narrative: The LLM-generated EOD narrative.
         target_date: The date for the summary (ISO format).
-        ticket_count: Total number of tickets active on that day.
-        status_counts: Dict mapping status to count.
+        tickets: List of ticket dicts from the tracker API.
+        project_name: Optional project name to include in the header.
 
     Returns:
         A list of Block Kit block dicts.
     """
+    DONE = {"done", "completed", "closed"}
+
+    REVIEW = {"in_review", "review"}
+    ACTIONABLE = DONE | {"in_progress"} | REVIEW | {"blocked"}
+
+    # Build status counts — only actionable statuses
+    status_counts: dict[str, int] = {}
+    for t in tickets:
+        status = t.get("status", "unknown")
+        if status in ACTIONABLE:
+            status_counts[status] = status_counts.get(status, 0) + 1
+
+    # Context bar: only status breakdown
     stats_parts = []
     for status, count in status_counts.items():
         emoji = STATUS_EMOJI.get(status, ":grey_question:")
         label = status.replace("_", " ").title()
         stats_parts.append(f"{emoji} {label}: *{count}*")
 
+    header = f"EOD Summary — {project_name} — {target_date}" if project_name else f"EOD Summary — {target_date}"
+
     blocks: list[dict] = [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f":sunset: EOD Summary — {target_date}",
+                "text": header,
                 "emoji": True,
             },
         },
-        {
+    ]
+
+    if stats_parts:
+        blocks.append({
             "type": "context",
             "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"*{ticket_count} ticket(s)* active  |  " + "  |  ".join(stats_parts) if stats_parts else f"*{ticket_count} ticket(s)* active",
-                },
+                {"type": "mrkdwn", "text": "  |  ".join(stats_parts)},
             ],
-        },
-        {"type": "divider"},
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": narrative},
-        },
+        })
+
+    blocks.append({"type": "divider"})
+
+    # Group tickets by status category — only show actionable sections
+    completed = [t for t in tickets if t.get("status") in DONE]
+    in_progress = [t for t in tickets if t.get("status") == "in_progress"]
+    in_review = [t for t in tickets if t.get("status") in REVIEW]
+    blocked = [t for t in tickets if t.get("status") == "blocked"]
+
+    def _ticket_lines(group: list[dict]) -> str:
+        lines = []
+        for t in group:
+            tid = t.get("id", "?")
+            title = t.get("title", "Untitled")
+            lines.append(f"`{tid}` {title}")
+        return "\n".join(lines)
+
+    sections = [
+        (":white_check_mark: Completed", completed),
+        (":hourglass_flowing_sand: In Progress", in_progress),
+        (":eyes: In Review", in_review),
+        (":no_entry_sign: Blocked", blocked),
     ]
+
+    for heading, group in sections:
+        if not group:
+            continue
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{heading}*\n{_ticket_lines(group)}",
+            },
+        })
+
+    # Footer warnings
+    blocks.append({"type": "divider"})
+    warnings = []
+    if blocked:
+        warnings.append(f":no_entry_sign: *{len(blocked)}* ticket(s) blocked")
+    critical = [t for t in tickets if t.get("priority") == "critical"]
+    if critical:
+        crit_list = ", ".join(f"`{t.get('id', '?')}` {t.get('title', 'Untitled')}" for t in critical)
+        warnings.append(f":red_circle: *{len(critical)}* critical: {crit_list}")
+    if warnings:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": "  |  ".join(warnings)},
+            ],
+        })
+
     return blocks
 
 

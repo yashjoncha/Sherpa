@@ -95,6 +95,9 @@ SLACK_APP_TOKEN = env("SLACK_APP_TOKEN", default="")
 # Sprint retro auto-post channel
 RETRO_SLACK_CHANNEL = env("RETRO_SLACK_CHANNEL", default="C0AFST8QY6N")
 
+# Per-project Slack channel overrides for auto_eod (JSON dict: {"ProjectName": "C12345"})
+PROJECT_SLACK_CHANNELS = env.json("PROJECT_SLACK_CHANNELS", default={})
+
 # Tracker
 TRACKER_API_URL = env("TRACKER_API_URL", default="https://tracker.blaziken.in")
 TRACKER_API_TOKEN = env("TRACKER_API_TOKEN", default="")
