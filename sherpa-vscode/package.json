@@ -20,7 +20,7 @@
         {
           "id": "sherpa-tickets",
           "title": "Sherpa Tickets",
-          "icon": "$(checklist)"
+          "icon": "media/sherpa-icon.svg"
         }
       ]
     },
@@ -116,7 +116,7 @@
       "properties": {
         "sherpa.apiUrl": {
           "type": "string",
-          "default": "http://localhost:8000",
+          "default": "http://72.62.231.170:8000",
           "description": "Base URL of the Sherpa API server"
         }
       }

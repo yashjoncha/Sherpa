@@ -9,7 +9,7 @@ async function getSession(): Promise<vscode.AuthenticationSession | undefined> {
 
 function getBaseUrl(): string {
   const config = vscode.workspace.getConfiguration("sherpa");
-  return config.get<string>("apiUrl", "http://localhost:8000");
+  return config.get<string>("apiUrl", "http://72.62.231.170:8000");
 }
 
 async function apiFetch(

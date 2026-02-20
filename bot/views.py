@@ -2,8 +2,10 @@
 
 import json
 import logging
+from pathlib import Path
 
-from django.http import JsonResponse
+from django.conf import settings
+from django.http import FileResponse, JsonResponse
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
@@ -75,6 +77,19 @@ def slack_events(request):
 # ---------------------------------------------------------------------------
 # VS Code API
 # ---------------------------------------------------------------------------
+
+def vscode_download_extension(request):
+    """Serve the latest .vsix file for download — no auth required."""
+    vsix_path = settings.BASE_DIR / "sherpa-vscode" / "sherpa-tickets-0.1.0.vsix"
+    if not vsix_path.exists():
+        return JsonResponse({"error": "Extension package not found"}, status=404)
+    return FileResponse(
+        open(vsix_path, "rb"),
+        content_type="application/octet-stream",
+        as_attachment=True,
+        filename=vsix_path.name,
+    )
+
 
 @api_view(["GET"])
 def vscode_my_tickets(request):
