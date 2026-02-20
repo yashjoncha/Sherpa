@@ -63,6 +63,16 @@ ACTIVE_STATUSES = {
 }
 
 
+def _extract_project_name(project) -> str:
+    """Extract a lowercase project name from a project value.
+
+    Handles both ``{"id": 1, "title": "X"}`` dicts and plain strings.
+    """
+    if isinstance(project, dict):
+        return (project.get("title") or project.get("name") or "").lower()
+    return (str(project) if project else "").lower()
+
+
 def _extract_assignee_key(assignee) -> tuple[str, str]:
     """Extract (display_name, canonical_key) from an assignee value.
 
@@ -107,7 +117,7 @@ def build_candidate_profiles(
         Each dict contains: name, key, total_tickets, active_tickets,
         project_tickets, label_overlap, relevance_score.
     """
-    target_project = (target_ticket.get("project") or "").lower()
+    target_project = _extract_project_name(target_ticket.get("project"))
     target_labels = _extract_label_names(target_ticket)
 
     candidates: dict[str, dict] = {}
@@ -120,7 +130,7 @@ def build_candidate_profiles(
             assignee_list = [assignee_list]
 
         status = (ticket.get("status") or "").lower()
-        ticket_project = (ticket.get("project") or "").lower()
+        ticket_project = _extract_project_name(ticket.get("project"))
         ticket_labels = _extract_label_names(ticket)
 
         for assignee in assignee_list:
@@ -174,7 +184,11 @@ def build_suggestion_prompt(
         A prompt string for the LLM.
     """
     title = target_ticket.get("title", "Untitled")
-    project = target_ticket.get("project", "Unknown")
+    raw_project = target_ticket.get("project", "Unknown")
+    if isinstance(raw_project, dict):
+        project = raw_project.get("title") or raw_project.get("name") or "Unknown"
+    else:
+        project = str(raw_project) if raw_project else "Unknown"
     priority = target_ticket.get("priority", "unknown")
     labels = _extract_label_names(target_ticket)
     labels_str = ", ".join(sorted(labels)) if labels else "none"
