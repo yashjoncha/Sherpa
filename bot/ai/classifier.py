@@ -14,7 +14,7 @@ logger = logging.getLogger("bot.ai.classifier")
 VALID_INTENTS = {
     "my_tickets", "all_tickets", "ticket_detail", "summary",
     "stale_tickets", "update_ticket", "create_ticket", "smart_assign",
-    "sprint_health", "greeting", "unknown",
+    "sprint_health", "sprint_retro", "eod_summary", "greeting", "unknown",
 }
 
 

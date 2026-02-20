@@ -519,6 +519,139 @@ def format_eod_summary(narrative: str, target_date: str, ticket_count: int, stat
     return blocks
 
 
+def format_sprint_retro(
+    narrative: str,
+    sprint: dict,
+    stats: dict,
+    member_stats: list[dict],
+) -> list[dict]:
+    """Format a sprint retrospective report as Block Kit blocks.
+
+    Args:
+        narrative: The LLM-generated retrospective narrative.
+        sprint: Sprint dict with name, start_date, end_date.
+        stats: Dict with total, completed, missed, points_completed, points_total, completion_rate.
+        member_stats: List of dicts with name, completed, total, points.
+
+    Returns:
+        A list of Block Kit block dicts.
+    """
+    name = sprint.get("name", "Unknown Sprint")
+    start = sprint.get("start_date", "?")
+    end = sprint.get("end_date", "?")
+    total = stats.get("total", 0)
+    completed = stats.get("completed", 0)
+    missed = stats.get("missed", 0)
+    points_done = stats.get("points_completed", 0)
+    points_total = stats.get("points_total", 0)
+    rate = stats.get("completion_rate", 0)
+
+    # Status breakdown
+    status_counts = stats.get("status_counts", {})
+    status_parts = []
+    for status, count in status_counts.items():
+        emoji = STATUS_EMOJI.get(status, ":grey_question:")
+        label = status.replace("_", " ").title()
+        status_parts.append(f"{emoji} {label}: *{count}*")
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f":checkered_flag: Sprint Retro — {name}",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": (
+                        f":calendar: {start} → {end}  |  "
+                        f":ticket: *{total}* tickets  |  "
+                        f":white_check_mark: *{rate}%* completed  |  "
+                        f":dart: *{points_done}/{points_total}* story points"
+                    ),
+                },
+            ],
+        },
+    ]
+
+    # Status breakdown bar
+    if status_parts:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "  |  ".join(status_parts),
+            },
+        })
+
+    blocks.append({"type": "divider"})
+
+    # LLM narrative
+    blocks.append({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": narrative},
+    })
+
+    # Team delivery leaderboard
+    if member_stats:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "*:trophy: Team Delivery*",
+            },
+        })
+        for ms in member_stats:
+            m_name = ms.get("name", "Unknown")
+            m_done = ms.get("completed", 0)
+            m_total = ms.get("total", 0)
+            m_points = ms.get("points", 0)
+            m_rate = round(m_done / m_total * 100) if m_total > 0 else 0
+            if m_rate >= 80:
+                indicator = ":large_green_circle:"
+            elif m_rate >= 50:
+                indicator = ":large_yellow_circle:"
+            else:
+                indicator = ":red_circle:"
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": (
+                            f"{indicator} *{m_name}*: {m_done}/{m_total} tickets "
+                            f"({m_rate}%)  |  :dart: {m_points} pts"
+                        ),
+                    },
+                ],
+            })
+
+    # Footer warnings
+    blocked_count = status_counts.get("blocked", 0)
+    unassigned = stats.get("unassigned_count", 0)
+    warnings = []
+    if blocked_count:
+        warnings.append(f":no_entry_sign: *{blocked_count}* ticket(s) were blocked")
+    if unassigned:
+        warnings.append(f":warning: *{unassigned}* ticket(s) had no assignee")
+    if warnings:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": "  |  ".join(warnings)},
+            ],
+        })
+
+    return blocks
+
+
 def format_link_result(mapping: dict, created: bool) -> list[dict]:
     """Format the result of linking a Slack user to a tracker account.
 

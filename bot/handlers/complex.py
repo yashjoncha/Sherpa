@@ -13,6 +13,7 @@ from bot.ai.rag import retrieve_context
 from integrations.slack_format import (
     format_eod_summary,
     format_error_message,
+    format_sprint_retro,
     format_summary,
     format_ticket_created,
     format_assignment_recommendation,
@@ -21,6 +22,8 @@ from integrations.slack_format import (
 from integrations.tracker import (
     create_ticket,
     get_projects,
+    get_sprints,
+    get_sprint_tickets,
     get_ticket_summary,
     get_tickets_by_date,
     get_all_tickets,
@@ -321,3 +324,200 @@ def handle_eod_summary(message: str, user_id: str, params: dict, say) -> None:
         return
 
     say(blocks=format_eod_summary(narrative, target_date, len(tickets), status_counts))
+
+
+DONE_STATUSES = {"done", "completed", "closed"}
+
+
+def _resolve_sprint(params: dict) -> dict | None:
+    """Resolve a sprint from params (by name, id, or default to last completed)."""
+    sprints = get_sprints()
+    if not sprints:
+        return None
+
+    sprint_name = params.get("sprint_name", "").strip()
+    sprint_id = params.get("sprint_id", "").strip()
+
+    if sprint_id:
+        for s in sprints:
+            if str(s.get("id")) == sprint_id:
+                return s
+
+    if sprint_name:
+        name_lower = sprint_name.lower()
+        for s in sprints:
+            if (s.get("name") or "").lower() == name_lower:
+                return s
+        # Partial match fallback
+        for s in sprints:
+            if name_lower in (s.get("name") or "").lower():
+                return s
+
+    # Default: most recently completed sprint, or the latest sprint overall
+    completed = [s for s in sprints if (s.get("status") or "").lower() in ("completed", "closed", "done")]
+    if completed:
+        return sorted(completed, key=lambda s: s.get("end_date", ""), reverse=True)[0]
+
+    # Fallback to the latest sprint by end_date
+    return sorted(sprints, key=lambda s: s.get("end_date", ""), reverse=True)[0]
+
+
+def _compute_sprint_stats(tickets: list[dict]) -> tuple[dict, list[dict]]:
+    """Compute sprint stats and per-member stats from tickets.
+
+    Returns:
+        (stats_dict, member_stats_list)
+    """
+    total = len(tickets)
+    completed = 0
+    points_completed = 0
+    points_total = 0
+    status_counts: dict[str, int] = {}
+    member_map: dict[str, dict] = {}
+    unassigned = 0
+
+    for t in tickets:
+        status = t.get("status", "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        sp = t.get("story_points") or 0
+        points_total += sp
+
+        is_done = status in DONE_STATUSES
+        if is_done:
+            completed += 1
+            points_completed += sp
+
+        assignees = t.get("assignees", [])
+        if not assignees:
+            unassigned += 1
+
+        if isinstance(assignees, list):
+            for a in assignees:
+                if isinstance(a, dict):
+                    name = a.get("name") or a.get("username") or "Unknown"
+                else:
+                    name = str(a)
+                if name not in member_map:
+                    member_map[name] = {"name": name, "completed": 0, "total": 0, "points": 0}
+                member_map[name]["total"] += 1
+                if is_done:
+                    member_map[name]["completed"] += 1
+                    member_map[name]["points"] += sp
+
+    missed = total - completed
+    rate = round(completed / total * 100) if total > 0 else 0
+
+    stats = {
+        "total": total,
+        "completed": completed,
+        "missed": missed,
+        "points_completed": points_completed,
+        "points_total": points_total,
+        "completion_rate": rate,
+        "status_counts": status_counts,
+        "unassigned_count": unassigned,
+    }
+
+    member_stats = sorted(member_map.values(), key=lambda m: m["completed"], reverse=True)
+    return stats, member_stats
+
+
+def handle_sprint_retro(message: str, user_id: str, params: dict, say) -> None:
+    """Generate a sprint retrospective report."""
+    try:
+        sprint = _resolve_sprint(params)
+    except Exception:
+        logger.exception("Failed to fetch sprints")
+        say(blocks=format_error_message("Could not fetch sprint data. Please try again."))
+        return
+
+    if not sprint:
+        say(blocks=format_error_message("No sprints found. Please check your tracker."))
+        return
+
+    sprint_id = sprint.get("id")
+    sprint_name = sprint.get("name", "Unknown")
+
+    try:
+        tickets = get_sprint_tickets(sprint_id)
+    except Exception:
+        logger.exception("Failed to fetch tickets for sprint %s", sprint_id)
+        say(blocks=format_error_message(f"Could not fetch tickets for sprint *{sprint_name}*. Please try again."))
+        return
+
+    if not tickets:
+        say(blocks=format_error_message(f"No tickets found for sprint *{sprint_name}*."))
+        return
+
+    stats, member_stats = _compute_sprint_stats(tickets)
+
+    # Build ticket breakdown for the LLM
+    ticket_lines = []
+    for t in tickets:
+        tid = t.get("id", "?")
+        title = t.get("title", "Untitled")
+        status = t.get("status", "unknown")
+        priority = t.get("priority", "unknown")
+        sp = t.get("story_points") or 0
+        assignees = t.get("assignees", [])
+        if isinstance(assignees, list):
+            names = ", ".join(
+                a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
+                for a in assignees
+            ) or "Unassigned"
+        else:
+            names = str(assignees) or "Unassigned"
+        ticket_lines.append(f"- [{tid}] {title} | Status: {status} | Priority: {priority} | Points: {sp} | Assignees: {names}")
+
+    # Build member stats text for the LLM
+    member_lines = []
+    for ms in member_stats:
+        member_lines.append(
+            f"- {ms['name']}: {ms['completed']}/{ms['total']} tickets completed, {ms['points']} story points"
+        )
+
+    # Velocity comparison: try to find the previous sprint
+    velocity_text = "No previous sprint data available for comparison."
+    try:
+        sprints = get_sprints()
+        sorted_sprints = sorted(sprints, key=lambda s: s.get("end_date", ""))
+        current_idx = next((i for i, s in enumerate(sorted_sprints) if s.get("id") == sprint_id), -1)
+        if current_idx > 0:
+            prev_sprint = sorted_sprints[current_idx - 1]
+            prev_tickets = get_sprint_tickets(prev_sprint["id"])
+            prev_stats, _ = _compute_sprint_stats(prev_tickets)
+            velocity_text = (
+                f"Previous sprint ({prev_sprint.get('name', '?')}): "
+                f"{prev_stats['points_completed']}/{prev_stats['points_total']} story points, "
+                f"{prev_stats['completion_rate']}% completion rate.\n"
+                f"Current sprint ({sprint_name}): "
+                f"{stats['points_completed']}/{stats['points_total']} story points, "
+                f"{stats['completion_rate']}% completion rate."
+            )
+    except Exception:
+        logger.warning("Could not fetch previous sprint for velocity comparison")
+
+    # Build and run LLM prompt
+    prompt = load_prompt("sprint_retro")
+    prompt = prompt.replace("{sprint_name}", sprint_name)
+    prompt = prompt.replace("{sprint_status}", sprint.get("status", "unknown"))
+    prompt = prompt.replace("{start_date}", sprint.get("start_date", "?"))
+    prompt = prompt.replace("{end_date}", sprint.get("end_date", "?"))
+    prompt = prompt.replace("{total_tickets}", str(stats["total"]))
+    prompt = prompt.replace("{completed_count}", str(stats["completed"]))
+    prompt = prompt.replace("{missed_count}", str(stats["missed"]))
+    prompt = prompt.replace("{points_completed}", str(stats["points_completed"]))
+    prompt = prompt.replace("{points_total}", str(stats["points_total"]))
+    prompt = prompt.replace("{completion_rate}", str(stats["completion_rate"]))
+    prompt = prompt.replace("{member_stats}", "\n".join(member_lines) or "No assignee data available.")
+    prompt = prompt.replace("{ticket_breakdown}", "\n".join(ticket_lines))
+    prompt = prompt.replace("{velocity_data}", velocity_text)
+
+    try:
+        narrative = run_completion(prompt, message, max_tokens=600, temperature=0.3)
+    except Exception:
+        logger.exception("LLM failed for sprint_retro")
+        say(blocks=format_error_message("I couldn't generate the retrospective. Please try again."))
+        return
+
+    say(blocks=format_sprint_retro(narrative, sprint, stats, member_stats))

@@ -12,6 +12,7 @@ from bot.handlers.complex import (
     handle_eod_summary,
     handle_smart_assign,
     handle_sprint_health,
+    handle_sprint_retro,
     handle_summary,
     handle_update_ticket,
 )
@@ -29,5 +30,6 @@ HANDLER_REGISTRY: dict[str, callable] = {
     "smart_assign": handle_smart_assign,
     "summary": handle_summary,
     "sprint_health": handle_sprint_health,
+    "sprint_retro": handle_sprint_retro,
     "eod_summary": handle_eod_summary,
 }

@@ -37,7 +37,9 @@ HELP_TEXT = (
     "- *Update a ticket* \u2014 \"mark ticket BZ-10 as done\"\n"
     "- *Create a ticket* \u2014 \"create a ticket for payment bug\"\n"
     "- *Smart assign* \u2014 \"who should work on the login issue?\"\n"
-    "- *Sprint health* \u2014 \"how's the sprint going?\"\n\n"
+    "- *Sprint health* \u2014 \"how's the sprint going?\"\n"
+    "- *Sprint retro* \u2014 \"sprint retrospective\" or \"retro for Arbok\"\n"
+    "- *EOD summary* \u2014 \"eod summary\" or \"daily report\"\n\n"
     "Just message me naturally and I'll figure out the rest!"
 )
 

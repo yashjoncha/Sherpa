@@ -21,6 +21,8 @@ from integrations.slack_format import (
 from integrations.tracker import (
     TrackerAPIError,
     get_all_tickets,
+    get_sprints,
+    get_sprint_tickets,
     get_stale_tickets,
     get_ticket_detail,
     get_ticket_summary,
@@ -352,6 +354,146 @@ def handle_eod(ack, respond, command):
         return
 
     respond(blocks=format_eod_summary(narrative, target_date, len(tickets), status_counts))
+
+
+@app.command("/retro")
+def handle_retro(ack, respond, command):
+    ack()
+
+    from bot.handlers.complex import (
+        DONE_STATUSES,
+        _compute_sprint_stats,
+        _resolve_sprint,
+    )
+    from integrations.slack_format import format_sprint_retro
+
+    text = command.get("text", "").strip()
+
+    # Build params from the slash command text
+    params: dict[str, str] = {}
+    if text:
+        if text.isdigit():
+            params["sprint_id"] = text
+        else:
+            params["sprint_name"] = text
+
+    try:
+        sprint = _resolve_sprint(params)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error for /retro: %s", exc)
+        respond(blocks=format_error_message(
+            "The tracker returned an error. Please try again later."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for /retro")
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    if not sprint:
+        respond(blocks=format_error_message("No sprints found. Please check your tracker."))
+        return
+
+    sprint_id = sprint.get("id")
+    sprint_name = sprint.get("name", "Unknown")
+
+    try:
+        tickets = get_sprint_tickets(sprint_id)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error fetching sprint tickets: %s", exc)
+        respond(blocks=format_error_message(
+            "The tracker returned an error. Please try again later."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for sprint tickets")
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    if not tickets:
+        respond(blocks=format_error_message(f"No tickets found for sprint *{sprint_name}*."))
+        return
+
+    stats, member_stats = _compute_sprint_stats(tickets)
+
+    # Build ticket breakdown for the LLM
+    ticket_lines = []
+    for t in tickets:
+        tid = t.get("id", "?")
+        title = t.get("title", "Untitled")
+        status = t.get("status", "unknown")
+        priority = t.get("priority", "unknown")
+        sp = t.get("story_points") or 0
+        assignees = t.get("assignees", [])
+        if isinstance(assignees, list):
+            names = ", ".join(
+                a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
+                for a in assignees
+            ) or "Unassigned"
+        else:
+            names = str(assignees) or "Unassigned"
+        ticket_lines.append(f"- [{tid}] {title} | Status: {status} | Priority: {priority} | Points: {sp} | Assignees: {names}")
+
+    # Build member stats text
+    member_lines = []
+    for ms in member_stats:
+        member_lines.append(
+            f"- {ms['name']}: {ms['completed']}/{ms['total']} tickets completed, {ms['points']} story points"
+        )
+
+    # Velocity comparison
+    velocity_text = "No previous sprint data available for comparison."
+    try:
+        sprints = get_sprints()
+        sorted_sprints = sorted(sprints, key=lambda s: s.get("end_date", ""))
+        current_idx = next((i for i, s in enumerate(sorted_sprints) if s.get("id") == sprint_id), -1)
+        if current_idx > 0:
+            prev_sprint = sorted_sprints[current_idx - 1]
+            prev_tickets = get_sprint_tickets(prev_sprint["id"])
+            prev_stats, _ = _compute_sprint_stats(prev_tickets)
+            velocity_text = (
+                f"Previous sprint ({prev_sprint.get('name', '?')}): "
+                f"{prev_stats['points_completed']}/{prev_stats['points_total']} story points, "
+                f"{prev_stats['completion_rate']}% completion rate.\n"
+                f"Current sprint ({sprint_name}): "
+                f"{stats['points_completed']}/{stats['points_total']} story points, "
+                f"{stats['completion_rate']}% completion rate."
+            )
+    except Exception:
+        logger.warning("Could not fetch previous sprint for velocity comparison")
+
+    from bot.ai.llm import run_completion
+    from bot.ai.prompts import load_prompt
+
+    prompt = load_prompt("sprint_retro")
+    prompt = prompt.replace("{sprint_name}", sprint_name)
+    prompt = prompt.replace("{sprint_status}", sprint.get("status", "unknown"))
+    prompt = prompt.replace("{start_date}", sprint.get("start_date", "?"))
+    prompt = prompt.replace("{end_date}", sprint.get("end_date", "?"))
+    prompt = prompt.replace("{total_tickets}", str(stats["total"]))
+    prompt = prompt.replace("{completed_count}", str(stats["completed"]))
+    prompt = prompt.replace("{missed_count}", str(stats["missed"]))
+    prompt = prompt.replace("{points_completed}", str(stats["points_completed"]))
+    prompt = prompt.replace("{points_total}", str(stats["points_total"]))
+    prompt = prompt.replace("{completion_rate}", str(stats["completion_rate"]))
+    prompt = prompt.replace("{member_stats}", "\n".join(member_lines) or "No assignee data available.")
+    prompt = prompt.replace("{ticket_breakdown}", "\n".join(ticket_lines))
+    prompt = prompt.replace("{velocity_data}", velocity_text)
+
+    try:
+        narrative = run_completion(prompt, "sprint retro", max_tokens=600, temperature=0.3)
+    except Exception:
+        logger.exception("LLM failed for /retro command")
+        respond(blocks=format_error_message(
+            "I couldn't generate the retrospective. Please try again."
+        ))
+        return
+
+    respond(blocks=format_sprint_retro(narrative, sprint, stats, member_stats))
 
 
 # ---------------------------------------------------------------------------

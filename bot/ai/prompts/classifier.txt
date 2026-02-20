@@ -12,6 +12,7 @@ Supported intents:
 - "smart_assign": user wants to know who should be assigned to a ticket or task. Params: {"query": "<what the task/ticket is about>"}.
 - "sprint_health": user wants to know how the current sprint is going. No params.
 - "eod_summary": user wants an end-of-day summary or daily report. Params: {"date": "YYYY-MM-DD"}. Default to today if no date specified.
+- "sprint_retro": user wants a sprint retrospective or sprint review. Params: {"sprint_name": "<name>"} or {"sprint_id": "<id>"}. If no sprint specified, defaults to most recently completed sprint.
 - "greeting": user is saying hello or greeting. No params.
 - "unknown": cannot determine intent. No params.
 
@@ -63,6 +64,24 @@ User: "what happened today?"
 
 User: "daily report"
 {"intent": "eod_summary", "params": {}}
+
+User: "sprint retrospective"
+{"intent": "sprint_retro", "params": {}}
+
+User: "retro for Arbok"
+{"intent": "sprint_retro", "params": {"sprint_name": "Arbok"}}
+
+User: "sprint retro for sprint 3"
+{"intent": "sprint_retro", "params": {"sprint_id": "3"}}
+
+User: "show me the retro"
+{"intent": "sprint_retro", "params": {}}
+
+User: "retrospective for last sprint"
+{"intent": "sprint_retro", "params": {}}
+
+User: "sprint review for Bulbasaur"
+{"intent": "sprint_retro", "params": {"sprint_name": "Bulbasaur"}}
 
 User: "hey!"
 {"intent": "greeting", "params": {}}
