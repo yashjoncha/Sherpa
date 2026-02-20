@@ -1,8 +1,8 @@
 {
   "name": "sherpa-tickets",
   "displayName": "Sherpa Tickets",
-  "description": "View your assigned tickets from Sherpa tracker in the sidebar",
-  "version": "0.0.1",
+  "description": "View and manage tickets from Sherpa tracker in the sidebar",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -10,7 +10,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:sherpaTickets"
+    "onView:sherpaMyTickets",
+    "onView:sherpaAllTickets"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -26,24 +27,87 @@
     "views": {
       "sherpa-tickets": [
         {
-          "id": "sherpaTickets",
+          "id": "sherpaMyTickets",
           "name": "My Tickets"
+        },
+        {
+          "id": "sherpaAllTickets",
+          "name": "All Tickets"
         }
       ]
     },
     "commands": [
       {
         "command": "sherpa.refreshTickets",
-        "title": "Refresh Tickets",
+        "title": "Sherpa: Refresh My Tickets",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "sherpa.refreshAllTickets",
+        "title": "Sherpa: Refresh All Tickets",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sherpa.openTicket",
+        "title": "Sherpa: Open Ticket"
+      },
+      {
+        "command": "sherpa.createTicket",
+        "title": "Sherpa: Create Ticket",
+        "icon": "$(add)"
+      },
+      {
+        "command": "sherpa.updateTicketStatus",
+        "title": "Sherpa: Change Status",
+        "icon": "$(symbol-event)"
+      },
+      {
+        "command": "sherpa.assignTicket",
+        "title": "Sherpa: Assign Ticket",
+        "icon": "$(person-add)"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "sherpa.refreshTickets",
-          "when": "view == sherpaTickets",
+          "when": "view == sherpaMyTickets",
           "group": "navigation"
+        },
+        {
+          "command": "sherpa.createTicket",
+          "when": "view == sherpaMyTickets",
+          "group": "navigation"
+        },
+        {
+          "command": "sherpa.refreshAllTickets",
+          "when": "view == sherpaAllTickets",
+          "group": "navigation"
+        },
+        {
+          "command": "sherpa.createTicket",
+          "when": "view == sherpaAllTickets",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sherpa.updateTicketStatus",
+          "when": "viewItem == ticket",
+          "group": "inline"
+        },
+        {
+          "command": "sherpa.assignTicket",
+          "when": "viewItem == ticket",
+          "group": "inline"
+        },
+        {
+          "command": "sherpa.updateTicketStatus",
+          "when": "viewItem == ticket"
+        },
+        {
+          "command": "sherpa.assignTicket",
+          "when": "viewItem == ticket"
         }
       ]
     },

@@ -1,15 +1,18 @@
 import * as vscode from "vscode";
 import { Ticket } from "./tickets";
+import { fetchMyTickets, fetchAllTickets } from "./api";
 
-const statusIcons: Record<Ticket["status"], vscode.ThemeIcon> = {
+const statusIcons: Record<string, vscode.ThemeIcon> = {
   open: new vscode.ThemeIcon("circle-large-outline"),
+  planning: new vscode.ThemeIcon("note"),
+  todo: new vscode.ThemeIcon("circle-outline"),
   in_progress: new vscode.ThemeIcon("loading~spin"),
   in_review: new vscode.ThemeIcon("eye"),
   done: new vscode.ThemeIcon("check"),
   blocked: new vscode.ThemeIcon("circle-slash"),
 };
 
-const priorityLabels: Record<Ticket["priority"], string> = {
+const priorityLabels: Record<string, string> = {
   critical: "\u{1F534} Critical",
   high: "\u{1F7E0} High",
   medium: "\u{1F7E1} Medium",
@@ -22,6 +25,8 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
   >();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
+  constructor(private mode: "my" | "all") {}
+
   refresh(): void {
     this._onDidChangeTreeData.fire();
   }
@@ -31,44 +36,10 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
   }
 
   async getChildren(): Promise<TicketItem[]> {
-    const tickets = await this.fetchTickets();
-    return tickets.map((ticket) => new TicketItem(ticket));
-  }
-
-  private async fetchTickets(): Promise<Ticket[]> {
-    const session = await vscode.authentication.getSession("github", ["user:email"], {
-      createIfNone: true,
-    });
-
-    if (!session) {
-      vscode.window.showWarningMessage("Sherpa: Please sign in with GitHub.");
-      return [];
-    }
-
-    const config = vscode.workspace.getConfiguration("sherpa");
-    const apiUrl = config.get<string>("apiUrl", "http://localhost:8000");
-
     try {
-      const response = await fetch(`${apiUrl}/api/vscode/my-tickets/`, {
-        headers: {
-          Authorization: `Bearer ${session.accessToken}`,
-        },
-      });
-
-      if (response.status === 404) {
-        vscode.window.showWarningMessage(
-          "Sherpa: Your GitHub account is not linked. Ask your admin to add you."
-        );
-        return [];
-      }
-
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error || `HTTP ${response.status}`);
-      }
-
-      const data = (await response.json()) as { tickets?: Ticket[] };
-      return data.tickets ?? [];
+      const tickets =
+        this.mode === "my" ? await fetchMyTickets() : await fetchAllTickets();
+      return tickets.map((t) => new TicketItem(t));
     } catch (err: any) {
       vscode.window.showErrorMessage(`Sherpa: ${err.message}`);
       return [];
@@ -85,9 +56,10 @@ export class TicketItem extends vscode.TreeItem {
       vscode.TreeItemCollapsibleState.None
     );
     this.ticket = ticket;
-    this.description = priorityLabels[ticket.priority];
+    this.contextValue = "ticket";
+    this.description = priorityLabels[ticket.priority] ?? ticket.priority;
     this.tooltip = `${ticket.task_id}: ${ticket.title}\nStatus: ${ticket.status}\nPriority: ${ticket.priority}\nStory Points: ${ticket.story_points}`;
-    this.iconPath = statusIcons[ticket.status];
+    this.iconPath = statusIcons[ticket.status] ?? statusIcons.open;
     this.command = {
       command: "sherpa.openTicket",
       title: "Open Ticket",
