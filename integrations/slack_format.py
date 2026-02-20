@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from django.conf import settings
+
 STATUS_EMOJI = {
     "open": ":large_blue_circle:",
     "planning": ":spiral_note_pad:",
@@ -332,6 +334,143 @@ def format_stale_tickets(tickets: list[dict], days: int, max_shown: int = 20) ->
             ],
         })
 
+    return blocks
+
+
+def format_ticket_created(ticket: dict) -> list[dict]:
+    """Format a confirmation message for a newly created ticket.
+
+    Args:
+        ticket: The created ticket dict from the API.
+
+    Returns:
+        A list of Block Kit block dicts.
+    """
+    title = ticket.get("title", "Untitled")
+    ticket_id = ticket.get("id", "")
+    priority = ticket.get("priority", "medium")
+    status = ticket.get("status", "todo")
+    deadline = ticket.get("external_deadline", "")
+    s_emoji = STATUS_EMOJI.get(status, ":clipboard:")
+    p_emoji = PRIORITY_EMOJI.get(priority, ":grey_question:")
+
+    header_text = ":white_check_mark: Ticket created!"
+    if ticket_id:
+        ticket_url = f"{settings.TRACKER_API_URL}/tasks/{ticket_id}/"
+        header_text += f"  <{ticket_url}|*{ticket_id}*>"
+
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": header_text},
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{title}*",
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Status:* {s_emoji} {status.replace('_', ' ').title()}"},
+                {"type": "mrkdwn", "text": f"*Priority:* {p_emoji} {priority.title()}"},
+            ],
+        },
+    ]
+
+    if deadline:
+        blocks.append({
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Deadline:* :calendar: {deadline}"},
+            ],
+        })
+
+    assignees = ticket.get("assignees", [])
+    if assignees:
+        if isinstance(assignees, list):
+            names = ", ".join(
+                f"<@{a}>" if isinstance(a, str) else
+                f"<@{a.get('slack_user_id', '')}>" if isinstance(a, dict) and a.get('slack_user_id') else
+                str(a.get("name", a.get("username", a))) if isinstance(a, dict) else str(a)
+                for a in assignees
+            )
+        else:
+            names = str(assignees)
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"*Assigned to:* {names}"},
+            ],
+        })
+
+    return blocks
+
+
+def format_assignment_recommendation(recommendation: str) -> list[dict]:
+    """Format an AI-generated assignment recommendation.
+
+    Args:
+        recommendation: The LLM-generated recommendation text.
+
+    Returns:
+        A list of Block Kit block dicts.
+    """
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ":bulb: Assignment Recommendation",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": recommendation},
+        },
+    ]
+
+
+def format_sprint_health(analysis: str, sprint_info: dict) -> list[dict]:
+    """Format a sprint health analysis.
+
+    Args:
+        analysis: The LLM-generated analysis text.
+        sprint_info: Raw sprint data dict with summary, stale counts, etc.
+
+    Returns:
+        A list of Block Kit block dicts.
+    """
+    total = sprint_info.get("total_tickets", 0)
+    stale = sprint_info.get("stale_tickets_count", 0)
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ":heartpulse: Sprint Health Check",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": analysis},
+        },
+        {"type": "divider"},
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"Total tickets: *{total}*  |  Stale tickets: *{stale}*",
+                },
+            ],
+        },
+    ]
     return blocks
 
 

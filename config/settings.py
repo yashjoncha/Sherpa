@@ -98,3 +98,15 @@ TRACKER_API_TOKEN = env("TRACKER_API_TOKEN", default="")
 
 # GitHub
 GITHUB_WEBHOOK_SECRET = env("GITHUB_WEBHOOK_SECRET", default="")
+
+# LLM
+LLM_MODEL_PATH = env(
+    "LLM_MODEL_PATH",
+    default=str(BASE_DIR / "models" / "Phi-3.5-mini-instruct-Q4_K_M.gguf"),
+)
+LLM_N_CTX = env.int("LLM_N_CTX", default=2048)
+LLM_N_THREADS = env.int("LLM_N_THREADS", default=2)
+
+# RAG / FAISS
+FAISS_INDEX_DIR = env("FAISS_INDEX_DIR", default=str(BASE_DIR / "faiss_index"))
+RAG_EMBEDDING_MODEL = env("RAG_EMBEDDING_MODEL", default="all-MiniLM-L6-v2")

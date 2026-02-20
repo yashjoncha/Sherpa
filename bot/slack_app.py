@@ -7,7 +7,7 @@ import httpx
 from django.conf import settings
 from slack_bolt import App
 
-from bot.ai import classify_intent
+from bot.router import route
 from integrations.slack_format import (
     format_error_message,
     format_link_result,
@@ -280,109 +280,11 @@ def handle_stale(ack, respond, command):
 # Natural-language message / mention handlers
 # ---------------------------------------------------------------------------
 
-HELP_TEXT = (
-    ":robot_face: *Hi, I'm Sherpa!* Here's what I can help with:\n\n"
-    "- *My tickets* — \"what tickets are assigned to me?\"\n"
-    "- *All tickets* — \"show all tickets\"\n"
-    "- *Ticket details* — \"show me details for ticket BZ-42\"\n"
-    "- *Summary* — \"give me a summary\"\n"
-    "- *Stale tickets* — \"any stale tickets in the last 7 days?\"\n"
-    "- *Update a ticket* — \"mark ticket BZ-10 as done\"\n\n"
-    "Just message me naturally and I'll figure out the rest!"
-)
-
-
 def _handle_natural_message(text: str, user_id: str, say):
     """Route a natural-language message to the right tracker action."""
     # Strip bot mention markup (e.g. <@U12345>) so the LLM sees clean text
     clean = re.sub(r"<@[A-Z0-9]+>", "", text).strip()
-    if not clean:
-        say(text=HELP_TEXT)
-        return
-
-    result = classify_intent(clean)
-    intent = result["intent"]
-    params = result["params"]
-
-    try:
-        if intent == "my_tickets":
-            tickets = get_tickets_for_user(user_id)
-            if not tickets:
-                say(blocks=format_no_tickets())
-            else:
-                say(blocks=format_tickets_response(tickets))
-
-        elif intent == "all_tickets":
-            tickets = get_all_tickets()
-            if not tickets:
-                say(blocks=format_no_tickets())
-            else:
-                say(blocks=format_tickets_response(tickets, header=":ticket: All Tickets"))
-
-        elif intent == "ticket_detail":
-            ticket_id = params.get("ticket_id", "").strip()
-            if not ticket_id:
-                say(blocks=format_error_message(
-                    "I couldn't find a ticket ID in your message. "
-                    "Try something like: \"show me details for ticket BZ-42\""
-                ))
-                return
-            ticket = get_ticket_detail(ticket_id)
-            say(blocks=format_ticket_detail(ticket))
-
-        elif intent == "summary":
-            summary = get_ticket_summary(user_id)
-            say(blocks=format_summary(summary))
-
-        elif intent == "stale_tickets":
-            days = params.get("days", 3)
-            try:
-                days = int(days)
-            except (TypeError, ValueError):
-                days = 3
-            tickets = get_stale_tickets(days)
-            say(blocks=format_stale_tickets(tickets, days))
-
-        elif intent == "update_ticket":
-            ticket_id = params.get("ticket_id", "").strip()
-            status = params.get("status", "").strip().lower()
-            if not ticket_id or not status:
-                say(blocks=format_error_message(
-                    "I need both a ticket ID and a status. "
-                    "Try: \"mark ticket BZ-10 as done\""
-                ))
-                return
-            if status not in VALID_STATUSES:
-                statuses = ", ".join(f"`{s}`" for s in VALID_STATUSES)
-                say(blocks=format_error_message(
-                    f"`{status}` is not a valid status.\nValid statuses: {statuses}"
-                ))
-                return
-            update_ticket(ticket_id, status, user_id)
-            s_label = status.replace("_", " ").title()
-            say(text=f":white_check_mark: Ticket `{ticket_id}` updated to *{s_label}*.")
-
-        elif intent == "greeting":
-            say(text=f":wave: Hey there! How can I help you today?\n\n{HELP_TEXT}")
-
-        else:
-            say(text=HELP_TEXT)
-
-    except TrackerAPIError as exc:
-        logger.error("Tracker API error (intent=%s): %s", intent, exc)
-        if exc.status_code == 404:
-            say(blocks=format_error_message(
-                "I couldn't find what you're looking for. Please double-check the ticket ID."
-            ))
-        else:
-            say(blocks=format_error_message(
-                "The tracker returned an error. Please try again later."
-            ))
-    except httpx.ConnectError:
-        logger.error("Could not reach tracker (intent=%s)", intent)
-        say(blocks=format_error_message(
-            "Could not reach the tracker. Please try again in a moment."
-        ))
+    route(clean, user_id, say)
 
 
 @app.event("message")

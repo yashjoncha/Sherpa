@@ -19,6 +19,28 @@ class TrackerAPIError(Exception):
         super().__init__(f"Tracker API error {status_code}: {detail}")
 
 
+def get_projects() -> list[dict]:
+    """Fetch all projects from the Tracker API.
+
+    Returns:
+        A list of project dicts (each with at least ``id`` and ``name``).
+
+    Raises:
+        TrackerAPIError: If the API returns a non-2xx status.
+        httpx.ConnectError: If the tracker is unreachable.
+    """
+    url = f"{settings.TRACKER_API_URL}/api/projects/"
+    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
+
+    response = httpx.get(url, headers=headers, timeout=10)
+
+    if response.status_code != 200:
+        raise TrackerAPIError(response.status_code, response.text)
+
+    data = response.json()
+    return data.get("projects", data)
+
+
 def get_tickets_for_user(
     slack_user_id: str,
     status: str | None = None,
@@ -83,6 +105,32 @@ def link_user(slack_user_id: str, username: str) -> tuple[dict, bool]:
 
     data = response.json()
     return data.get("mapping", data), response.status_code == 201
+
+
+def create_ticket(ticket_data: dict) -> dict:
+    """Create a new ticket via the Tracker API.
+
+    Args:
+        ticket_data: Dict with ticket fields. Required: ``title``.
+            Optional: ``description``, ``priority``, ``project``, ``slack_user_id``.
+
+    Returns:
+        The created ticket dict from the API.
+
+    Raises:
+        TrackerAPIError: If the API returns a non-2xx status.
+        httpx.ConnectError: If the tracker is unreachable.
+    """
+    url = f"{settings.TRACKER_API_URL}/api/tickets/"
+    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
+
+    response = httpx.post(url, json=ticket_data, headers=headers, timeout=10)
+
+    if response.status_code not in (200, 201):
+        raise TrackerAPIError(response.status_code, response.text)
+
+    data = response.json()
+    return data.get("ticket", data)
 
 
 def get_all_tickets(
