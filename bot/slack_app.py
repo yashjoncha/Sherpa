@@ -1,7 +1,10 @@
 """Slack Bolt application with command handlers."""
 
+import json
 import logging
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 from django.conf import settings
@@ -9,7 +12,9 @@ from slack_bolt import App
 
 from bot.ai import classify_intent
 from integrations.slack_format import (
+    MODAL_STATUS_OPTIONS,
     format_error_message,
+    format_grouped_tickets,
     format_link_result,
     format_no_tickets,
     format_stale_tickets,
@@ -19,6 +24,7 @@ from integrations.slack_format import (
 )
 from integrations.tracker import (
     TrackerAPIError,
+    assign_ticket,
     get_all_tickets,
     get_stale_tickets,
     get_ticket_detail,
@@ -30,9 +36,16 @@ from integrations.tracker import (
 
 logger = logging.getLogger("bot")
 
+
+def _run_in_background(func):
+    """Run func in a daemon thread so the handler returns immediately after ack()."""
+    threading.Thread(target=func, daemon=True).start()
+
+
 app = App(
     token=settings.SLACK_BOT_TOKEN,
     signing_secret=settings.SLACK_SIGNING_SECRET,
+    listener_executor=ThreadPoolExecutor(max_workers=20),
 )
 
 
@@ -47,35 +60,39 @@ def handle_tickets(ack, respond, command):
     ack()
 
     user_id = command["user_id"]
-    try:
-        tickets = get_tickets_for_user(user_id)
-    except TrackerAPIError as exc:
-        logger.error("Tracker API error for user %s: %s", user_id, exc)
-        if exc.status_code == 404:
-            respond(blocks=format_no_tickets())
-        elif exc.status_code in (401, 403):
-            respond(blocks=format_error_message(
-                "Could not authenticate with the tracker. Please contact an admin."
-            ))
-        else:
-            respond(blocks=format_error_message(
-                "The tracker returned an error. Please try again later."
-            ))
-        return
-    except httpx.ConnectError:
-        logger.error("Could not reach tracker for user %s", user_id)
-        respond(
-            blocks=format_error_message(
-                "Could not reach the tracker. Please try again in a moment."
+
+    def _process():
+        try:
+            tickets = get_tickets_for_user(user_id)
+        except TrackerAPIError as exc:
+            logger.error("Tracker API error for user %s: %s", user_id, exc)
+            if exc.status_code == 404:
+                respond(blocks=format_no_tickets())
+            elif exc.status_code in (401, 403):
+                respond(blocks=format_error_message(
+                    "Could not authenticate with the tracker. Please contact an admin."
+                ))
+            else:
+                respond(blocks=format_error_message(
+                    "The tracker returned an error. Please try again later."
+                ))
+            return
+        except httpx.HTTPError:
+            logger.error("Could not reach tracker for user %s", user_id)
+            respond(
+                blocks=format_error_message(
+                    "Could not reach the tracker. Please try again in a moment."
+                )
             )
-        )
-        return
+            return
 
-    if not tickets:
-        respond(blocks=format_no_tickets())
-        return
+        if not tickets:
+            respond(blocks=format_no_tickets())
+            return
 
-    respond(blocks=format_tickets_response(tickets))
+        respond(blocks=format_grouped_tickets(tickets))
+
+    _run_in_background(_process)
 
 
 VALID_STATUSES = [
@@ -90,48 +107,55 @@ def handle_link(ack, respond, command):
 
     user_id = command["user_id"]
     username = command["user_name"]
-    try:
-        mapping, created = link_user(user_id, username)
-    except TrackerAPIError as exc:
-        logger.error("Tracker API error linking user %s: %s", user_id, exc)
-        respond(blocks=format_error_message(
-            "Could not link your account. Please check the username and try again."
-        ))
-        return
-    except httpx.ConnectError:
-        logger.error("Could not reach tracker for link user %s", user_id)
-        respond(blocks=format_error_message(
-            "Could not reach the tracker. Please try again in a moment."
-        ))
-        return
 
-    respond(blocks=format_link_result(mapping, created))
+    def _process():
+        try:
+            mapping, created = link_user(user_id, username)
+        except TrackerAPIError as exc:
+            logger.error("Tracker API error linking user %s: %s", user_id, exc)
+            respond(blocks=format_error_message(
+                "Could not link your account. Please check the username and try again."
+            ))
+            return
+        except httpx.HTTPError:
+            logger.error("Could not reach tracker for link user %s", user_id)
+            respond(blocks=format_error_message(
+                "Could not reach the tracker. Please try again in a moment."
+            ))
+            return
+
+        respond(blocks=format_link_result(mapping, created))
+
+    _run_in_background(_process)
 
 
 @app.command("/ticket")
 def handle_ticket(ack, respond, command):
     ack()
 
-    try:
-        tickets = get_all_tickets()
-    except TrackerAPIError as exc:
-        logger.error("Tracker API error fetching all tickets: %s", exc)
-        respond(blocks=format_error_message(
-            "The tracker returned an error. Please try again later."
-        ))
-        return
-    except httpx.ConnectError:
-        logger.error("Could not reach tracker for all tickets")
-        respond(blocks=format_error_message(
-            "Could not reach the tracker. Please try again in a moment."
-        ))
-        return
+    def _process():
+        try:
+            tickets = get_all_tickets()
+        except TrackerAPIError as exc:
+            logger.error("Tracker API error fetching all tickets: %s", exc)
+            respond(blocks=format_error_message(
+                "The tracker returned an error. Please try again later."
+            ))
+            return
+        except httpx.HTTPError:
+            logger.error("Could not reach tracker for all tickets")
+            respond(blocks=format_error_message(
+                "Could not reach the tracker. Please try again in a moment."
+            ))
+            return
 
-    if not tickets:
-        respond(blocks=format_no_tickets())
-        return
+        if not tickets:
+            respond(blocks=format_no_tickets())
+            return
 
-    respond(blocks=format_tickets_response(tickets, header=":ticket: All Tickets"))
+        respond(blocks=format_grouped_tickets(tickets))
+
+    _run_in_background(_process)
 
 
 @app.command("/ticket-detail")
@@ -146,27 +170,30 @@ def handle_ticket_detail(ack, respond, command):
         ))
         return
 
-    try:
-        ticket = get_ticket_detail(ticket_id)
-    except TrackerAPIError as exc:
-        logger.error("Tracker API error fetching ticket %s: %s", ticket_id, exc)
-        if exc.status_code == 404:
+    def _process():
+        try:
+            ticket = get_ticket_detail(ticket_id)
+        except TrackerAPIError as exc:
+            logger.error("Tracker API error fetching ticket %s: %s", ticket_id, exc)
+            if exc.status_code == 404:
+                respond(blocks=format_error_message(
+                    f"Ticket `{ticket_id}` was not found."
+                ))
+            else:
+                respond(blocks=format_error_message(
+                    "The tracker returned an error. Please try again later."
+                ))
+            return
+        except httpx.HTTPError:
+            logger.error("Could not reach tracker for ticket %s", ticket_id)
             respond(blocks=format_error_message(
-                f"Ticket `{ticket_id}` was not found."
+                "Could not reach the tracker. Please try again in a moment."
             ))
-        else:
-            respond(blocks=format_error_message(
-                "The tracker returned an error. Please try again later."
-            ))
-        return
-    except httpx.ConnectError:
-        logger.error("Could not reach tracker for ticket %s", ticket_id)
-        respond(blocks=format_error_message(
-            "Could not reach the tracker. Please try again in a moment."
-        ))
-        return
+            return
 
-    respond(blocks=format_ticket_detail(ticket))
+        respond(blocks=format_ticket_detail(ticket))
+
+    _run_in_background(_process)
 
 
 @app.command("/update")
@@ -194,30 +221,34 @@ def handle_update(ack, respond, command):
         return
 
     user_id = command["user_id"]
-    try:
-        update_ticket(ticket_id, status, user_id)
-    except TrackerAPIError as exc:
-        logger.error("Tracker API error updating ticket %s: %s", ticket_id, exc)
-        if exc.status_code == 404:
-            respond(blocks=format_error_message(
-                f"Ticket `{ticket_id}` was not found."
-            ))
-        else:
-            respond(blocks=format_error_message(
-                "The tracker returned an error. Please try again later."
-            ))
-        return
-    except httpx.ConnectError:
-        logger.error("Could not reach tracker for update %s", ticket_id)
-        respond(blocks=format_error_message(
-            "Could not reach the tracker. Please try again in a moment."
-        ))
-        return
 
-    s_label = status.replace("_", " ").title()
-    respond(
-        text=f":white_check_mark: Ticket `{ticket_id}` updated to *{s_label}*."
-    )
+    def _process():
+        try:
+            update_ticket(ticket_id, status, user_id)
+        except TrackerAPIError as exc:
+            logger.error("Tracker API error updating ticket %s: %s", ticket_id, exc)
+            if exc.status_code == 404:
+                respond(blocks=format_error_message(
+                    f"Ticket `{ticket_id}` was not found."
+                ))
+            else:
+                respond(blocks=format_error_message(
+                    "The tracker returned an error. Please try again later."
+                ))
+            return
+        except httpx.HTTPError:
+            logger.error("Could not reach tracker for update %s", ticket_id)
+            respond(blocks=format_error_message(
+                "Could not reach the tracker. Please try again in a moment."
+            ))
+            return
+
+        s_label = status.replace("_", " ").title()
+        respond(
+            text=f":white_check_mark: Ticket `{ticket_id}` updated to *{s_label}*."
+        )
+
+    _run_in_background(_process)
 
 
 @app.command("/summary")
@@ -225,22 +256,26 @@ def handle_summary(ack, respond, command):
     ack()
 
     user_id = command["user_id"]
-    try:
-        summary = get_ticket_summary(user_id)
-    except TrackerAPIError as exc:
-        logger.error("Tracker API error for summary (user %s): %s", user_id, exc)
-        respond(blocks=format_error_message(
-            "The tracker returned an error. Please try again later."
-        ))
-        return
-    except httpx.ConnectError:
-        logger.error("Could not reach tracker for summary (user %s)", user_id)
-        respond(blocks=format_error_message(
-            "Could not reach the tracker. Please try again in a moment."
-        ))
-        return
 
-    respond(blocks=format_summary(summary))
+    def _process():
+        try:
+            summary = get_ticket_summary(user_id)
+        except TrackerAPIError as exc:
+            logger.error("Tracker API error for summary (user %s): %s", user_id, exc)
+            respond(blocks=format_error_message(
+                "The tracker returned an error. Please try again later."
+            ))
+            return
+        except httpx.HTTPError:
+            logger.error("Could not reach tracker for summary (user %s)", user_id)
+            respond(blocks=format_error_message(
+                "Could not reach the tracker. Please try again in a moment."
+            ))
+            return
+
+        respond(blocks=format_summary(summary))
+
+    _run_in_background(_process)
 
 
 @app.command("/stale")
@@ -258,22 +293,261 @@ def handle_stale(ack, respond, command):
             ))
             return
 
-    try:
-        tickets = get_stale_tickets(days)
-    except TrackerAPIError as exc:
-        logger.error("Tracker API error for stale tickets: %s", exc)
-        respond(blocks=format_error_message(
-            "The tracker returned an error. Please try again later."
-        ))
-        return
-    except httpx.ConnectError:
-        logger.error("Could not reach tracker for stale tickets")
-        respond(blocks=format_error_message(
-            "Could not reach the tracker. Please try again in a moment."
-        ))
-        return
+    def _process():
+        try:
+            tickets = get_stale_tickets(days)
+        except TrackerAPIError as exc:
+            logger.error("Tracker API error for stale tickets: %s", exc)
+            respond(blocks=format_error_message(
+                "The tracker returned an error. Please try again later."
+            ))
+            return
+        except httpx.HTTPError:
+            logger.error("Could not reach tracker for stale tickets")
+            respond(blocks=format_error_message(
+                "Could not reach the tracker. Please try again in a moment."
+            ))
+            return
 
-    respond(blocks=format_stale_tickets(tickets, days))
+        respond(blocks=format_stale_tickets(tickets, days))
+
+    _run_in_background(_process)
+
+
+# ---------------------------------------------------------------------------
+# Interactive action handlers
+# ---------------------------------------------------------------------------
+
+
+@app.action(re.compile(r"^overflow_.*"))
+def handle_overflow(ack, body, respond):
+    ack()
+    selected = body["actions"][0]["selected_option"]["value"]
+    logger.info("Overflow action fired: %s", selected)
+
+    def _process():
+        if selected.startswith("mark_done_"):
+            ticket_id = selected[len("mark_done_"):]
+            try:
+                update_ticket(ticket_id, "done")
+                respond(
+                    text=f":white_check_mark: Ticket `{ticket_id}` marked as *Done*.",
+                    response_type="ephemeral",
+                    replace_original=False,
+                )
+            except (TrackerAPIError, httpx.HTTPError) as exc:
+                logger.error("Failed to mark done %s: %s", ticket_id, exc)
+                respond(
+                    text=f":warning: Could not update ticket `{ticket_id}`.",
+                    response_type="ephemeral",
+                    replace_original=False,
+                )
+
+        elif selected.startswith("mark_in_progress_"):
+            ticket_id = selected[len("mark_in_progress_"):]
+            try:
+                update_ticket(ticket_id, "in_progress")
+                respond(
+                    text=f":hourglass_flowing_sand: Ticket `{ticket_id}` marked as *In Progress*.",
+                    response_type="ephemeral",
+                    replace_original=False,
+                )
+            except (TrackerAPIError, httpx.HTTPError) as exc:
+                logger.error("Failed to mark in_progress %s: %s", ticket_id, exc)
+                respond(
+                    text=f":warning: Could not update ticket `{ticket_id}`.",
+                    response_type="ephemeral",
+                    replace_original=False,
+                )
+
+        elif selected.startswith("mark_todo_"):
+            ticket_id = selected[len("mark_todo_"):]
+            try:
+                update_ticket(ticket_id, "todo")
+                respond(
+                    text=f":clipboard: Ticket `{ticket_id}` moved to *Backlog*.",
+                    response_type="ephemeral",
+                    replace_original=False,
+                )
+            except (TrackerAPIError, httpx.HTTPError) as exc:
+                logger.error("Failed to mark todo %s: %s", ticket_id, exc)
+                respond(
+                    text=f":warning: Could not update ticket `{ticket_id}`.",
+                    response_type="ephemeral",
+                    replace_original=False,
+                )
+
+        elif selected.startswith("open_tracker_"):
+            ticket_id = selected[len("open_tracker_"):]
+            tracker_url = settings.TRACKER_API_URL
+            respond(
+                text=f":link: <{tracker_url}/tickets/{ticket_id}|Open ticket {ticket_id} in Tracker>",
+                response_type="ephemeral",
+                replace_original=False,
+            )
+
+    _run_in_background(_process)
+
+
+@app.action(re.compile(r"^assign_.*"))
+def handle_assign_button(ack, body, client):
+    ack()
+    ticket_id = body["actions"][0]["value"]
+    logger.info("Assign button clicked for ticket %s", ticket_id)
+    channel_id = body.get("channel", {}).get("id") if body.get("channel") else None
+    metadata = json.dumps({"ticket_id": str(ticket_id), "channel_id": channel_id})
+    try:
+        client.views_open(
+            trigger_id=body["trigger_id"],
+            view={
+                "type": "modal",
+                "callback_id": "assign_modal_submit",
+                "private_metadata": metadata,
+                "title": {"type": "plain_text", "text": "Assign Ticket"},
+                "submit": {"type": "plain_text", "text": "Assign"},
+                "close": {"type": "plain_text", "text": "Cancel"},
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"Assign ticket `{ticket_id}` to a team member.",
+                        },
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "user_block",
+                        "element": {
+                            "type": "users_select",
+                            "action_id": "selected_user",
+                            "placeholder": {"type": "plain_text", "text": "Pick a user"},
+                        },
+                        "label": {"type": "plain_text", "text": "Assignee"},
+                    },
+                ],
+            },
+        )
+    except Exception as exc:
+        logger.error("Failed to open assign modal: %s", exc)
+
+
+@app.action(re.compile(r"^update_status_.*"))
+def handle_update_status_button(ack, body, client):
+    ack()
+    ticket_id = body["actions"][0]["value"]
+    logger.info("Update Status button clicked for ticket %s", ticket_id)
+    channel_id = body.get("channel", {}).get("id") if body.get("channel") else None
+    metadata = json.dumps({"ticket_id": str(ticket_id), "channel_id": channel_id})
+    try:
+        client.views_open(
+            trigger_id=body["trigger_id"],
+            view={
+                "type": "modal",
+                "callback_id": "update_status_modal_submit",
+                "private_metadata": metadata,
+                "title": {"type": "plain_text", "text": "Update Status"},
+                "submit": {"type": "plain_text", "text": "Update"},
+                "close": {"type": "plain_text", "text": "Cancel"},
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"Update status for ticket `{ticket_id}`.",
+                        },
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "status_block",
+                        "element": {
+                            "type": "static_select",
+                            "action_id": "selected_status",
+                            "placeholder": {"type": "plain_text", "text": "Choose a status"},
+                            "options": MODAL_STATUS_OPTIONS,
+                        },
+                        "label": {"type": "plain_text", "text": "New Status"},
+                    },
+                ],
+            },
+        )
+    except Exception as exc:
+        logger.error("Failed to open update status modal: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Modal submission handlers
+# ---------------------------------------------------------------------------
+
+
+@app.view("assign_modal_submit")
+def handle_assign_modal(ack, body, client):
+    ack()
+    raw_metadata = body["view"]["private_metadata"]
+    try:
+        metadata = json.loads(raw_metadata)
+        ticket_id = metadata["ticket_id"]
+        channel_id = metadata.get("channel_id")
+    except (json.JSONDecodeError, KeyError, TypeError):
+        ticket_id = raw_metadata
+        channel_id = None
+    user_id = body["user"]["id"]
+    selected_user = (
+        body["view"]["state"]["values"]["user_block"]["selected_user"]["selected_user"]
+    )
+
+    def _process():
+        try:
+            assign_ticket(ticket_id, selected_user)
+            msg = f":white_check_mark: Ticket `{ticket_id}` assigned to <@{selected_user}>."
+        except (TrackerAPIError, httpx.HTTPError) as exc:
+            logger.error("Failed to assign ticket %s: %s", ticket_id, exc)
+            msg = f":warning: Could not assign ticket `{ticket_id}`. Please try again."
+        try:
+            if channel_id:
+                client.chat_postEphemeral(channel=channel_id, user=user_id, text=msg)
+            else:
+                dm = client.conversations_open(users=[user_id])
+                client.chat_postMessage(channel=dm["channel"]["id"], text=msg)
+        except Exception as exc:
+            logger.error("Failed to send feedback to user %s: %s", user_id, exc)
+
+    _run_in_background(_process)
+
+
+@app.view("update_status_modal_submit")
+def handle_update_status_modal(ack, body, client):
+    ack()
+    raw_metadata = body["view"]["private_metadata"]
+    try:
+        metadata = json.loads(raw_metadata)
+        ticket_id = metadata["ticket_id"]
+        channel_id = metadata.get("channel_id")
+    except (json.JSONDecodeError, KeyError, TypeError):
+        ticket_id = raw_metadata
+        channel_id = None
+    user_id = body["user"]["id"]
+    selected_status = (
+        body["view"]["state"]["values"]["status_block"]["selected_status"]["selected_option"]["value"]
+    )
+
+    def _process():
+        try:
+            update_ticket(ticket_id, selected_status)
+            label = selected_status.replace("_", " ").title()
+            msg = f":white_check_mark: Ticket `{ticket_id}` updated to *{label}*."
+        except (TrackerAPIError, httpx.HTTPError) as exc:
+            logger.error("Failed to update status for %s: %s", ticket_id, exc)
+            msg = f":warning: Could not update ticket `{ticket_id}`. Please try again."
+        try:
+            if channel_id:
+                client.chat_postEphemeral(channel=channel_id, user=user_id, text=msg)
+            else:
+                dm = client.conversations_open(users=[user_id])
+                client.chat_postMessage(channel=dm["channel"]["id"], text=msg)
+        except Exception as exc:
+            logger.error("Failed to send feedback to user %s: %s", user_id, exc)
+
+    _run_in_background(_process)
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +652,7 @@ def _handle_natural_message(text: str, user_id: str, say):
             say(blocks=format_error_message(
                 "The tracker returned an error. Please try again later."
             ))
-    except httpx.ConnectError:
+    except httpx.HTTPError:
         logger.error("Could not reach tracker (intent=%s)", intent)
         say(blocks=format_error_message(
             "Could not reach the tracker. Please try again in a moment."
@@ -392,14 +666,21 @@ def handle_dm(event, say):
     if event.get("subtype"):
         return
 
-    text = event.get("text", "")
-    user_id = event.get("user", "")
-    _handle_natural_message(text, user_id, say)
+    def _process():
+        text = event.get("text", "")
+        user_id = event.get("user", "")
+        _handle_natural_message(text, user_id, say)
+
+    _run_in_background(_process)
 
 
 @app.event("app_mention")
 def handle_mention(event, say):
     """Handle @mentions of the bot in channels."""
-    text = event.get("text", "")
-    user_id = event.get("user", "")
-    _handle_natural_message(text, user_id, say)
+
+    def _process():
+        text = event.get("text", "")
+        user_id = event.get("user", "")
+        _handle_natural_message(text, user_id, say)
+
+    _run_in_background(_process)

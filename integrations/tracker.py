@@ -229,3 +229,29 @@ def update_ticket(
         raise TrackerAPIError(response.status_code, response.text)
 
     return response.json()
+
+
+def assign_ticket(ticket_id: str, assignee_slack_id: str) -> dict:
+    """Assign a ticket to a user by their Slack ID.
+
+    Args:
+        ticket_id: The ticket identifier (e.g. ``BZ-42`` or ``42``).
+        assignee_slack_id: The Slack user ID of the new assignee.
+
+    Returns:
+        The updated ticket dict from the API.
+
+    Raises:
+        TrackerAPIError: If the API returns a non-2xx status.
+        httpx.ConnectError: If the tracker is unreachable.
+    """
+    url = f"{settings.TRACKER_API_URL}/api/tickets/{ticket_id}/update/"
+    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
+    payload = {"assignee_slack_id": assignee_slack_id}
+
+    response = httpx.post(url, json=payload, headers=headers, timeout=10)
+
+    if response.status_code != 200:
+        raise TrackerAPIError(response.status_code, response.text)
+
+    return response.json()

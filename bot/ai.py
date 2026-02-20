@@ -6,11 +6,9 @@ import json
 import logging
 import re
 
-from llama_cpp import Llama
-
 logger = logging.getLogger("bot.ai")
 
-_llm: Llama | None = None
+_llm = None
 
 MODEL_PATH = "/root/Sherpa/models/Phi-3.5-mini-instruct-Q4_K_M.gguf"
 
@@ -58,8 +56,10 @@ User: "hey!"
 /no_think"""
 
 
-def _get_llm() -> Llama:
+def _get_llm():
     """Return the singleton LLM instance, loading it on first call."""
+    from llama_cpp import Llama
+
     global _llm
     if _llm is None:
         logger.info("Loading LLM from %s", MODEL_PATH)
@@ -83,7 +83,11 @@ def classify_intent(message: str) -> dict:
         A dict with ``"intent"`` (str) and ``"params"`` (dict) keys.
         Falls back to ``{"intent": "unknown", "params": {}}`` on any error.
     """
-    llm = _get_llm()
+    try:
+        llm = _get_llm()
+    except ImportError:
+        logger.warning("LLM not available (llama_cpp not installed)")
+        return {"intent": "unknown", "params": {}}
 
     try:
         result = llm.create_chat_completion(

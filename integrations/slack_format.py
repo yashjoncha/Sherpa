@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 STATUS_EMOJI = {
     "open": ":large_blue_circle:",
     "planning": ":spiral_note_pad:",
@@ -17,10 +19,220 @@ STATUS_EMOJI = {
 
 PRIORITY_EMOJI = {
     "critical": ":red_circle:",
-    "high": ":orange_circle:",
-    "medium": ":yellow_circle:",
-    "low": ":green_circle:",
+    "high": ":large_orange_circle:",
+    "medium": ":large_yellow_circle:",
+    "low": ":large_green_circle:",
 }
+
+STATUS_GROUP_MAP = {
+    "in_progress": "In Progress",
+    "in_review": "In Progress",
+    "review": "In Progress",
+    "todo": "Backlog",
+    "open": "Backlog",
+    "planning": "Backlog",
+    "blocked": "Backlog",
+    "done": "Done",
+    "completed": "Done",
+    "closed": "Done",
+}
+
+GROUP_DISPLAY_ORDER = ["In Progress", "Backlog", "Done"]
+
+GROUP_EMOJI = {
+    "In Progress": ":hourglass_flowing_sand:",
+    "Backlog": ":clipboard:",
+    "Done": ":white_check_mark:",
+}
+
+MODAL_STATUS_OPTIONS = [
+    {"text": {"type": "plain_text", "text": "In Progress"}, "value": "in_progress"},
+    {"text": {"type": "plain_text", "text": "Backlog (Todo)"}, "value": "todo"},
+    {"text": {"type": "plain_text", "text": "Done"}, "value": "done"},
+    {"text": {"type": "plain_text", "text": "Blocked"}, "value": "blocked"},
+]
+
+
+def _get_assignee_display(ticket: dict) -> str:
+    """Normalise the assignee field(s) into display text."""
+    raw = ticket.get("assignees") or ticket.get("assignee")
+    if not raw:
+        return "_Unassigned_"
+
+    if isinstance(raw, list):
+        names = []
+        for a in raw:
+            if isinstance(a, dict):
+                names.append(a.get("name", a.get("username", str(a))))
+            else:
+                names.append(str(a))
+        return ", ".join(names) if names else "_Unassigned_"
+
+    if isinstance(raw, dict):
+        return raw.get("name", raw.get("username", str(raw)))
+
+    return str(raw)
+
+
+def _group_tickets(tickets: list[dict]) -> dict[str, list[dict]]:
+    """Group tickets into display groups based on status."""
+    groups: dict[str, list[dict]] = {g: [] for g in GROUP_DISPLAY_ORDER}
+    for ticket in tickets:
+        status = ticket.get("status", "").lower()
+        group = STATUS_GROUP_MAP.get(status, "Backlog")
+        groups[group].append(ticket)
+    return groups
+
+
+def format_grouped_tickets(tickets: list[dict], max_shown: int = 20) -> list[dict]:
+    """Format tickets as a grouped board with interactive elements.
+
+    Args:
+        tickets: List of ticket dicts.
+        max_shown: Maximum number of tickets to display (default 20).
+
+    Returns:
+        A list of Block Kit block dicts with grouped layout, overflow menus,
+        and action buttons.
+    """
+    if not tickets:
+        return [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": ":tada: *No tickets found!* The board is clear.",
+                },
+            },
+        ]
+
+    groups = _group_tickets(tickets)
+
+    # Header + summary stats + divider (3 blocks)
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ":ticket: Ticket Board",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Total:* {len(tickets)}"},
+                {"type": "mrkdwn", "text": f"*In Progress:* {len(groups['In Progress'])}"},
+                {"type": "mrkdwn", "text": f"*Backlog:* {len(groups['Backlog'])}"},
+                {"type": "mrkdwn", "text": f"*Done:* {len(groups['Done'])}"},
+            ],
+        },
+        {"type": "divider"},
+    ]
+
+    total_rendered = 0
+    truncated = len(tickets) > max_shown
+
+    for group in GROUP_DISPLAY_ORDER:
+        group_tickets = groups[group]
+        if not group_tickets:
+            continue
+
+        # Group header (1 block)
+        emoji = GROUP_EMOJI.get(group, ":grey_question:")
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"{emoji} *{group}* ({len(group_tickets)})"},
+        })
+
+        is_done = group == "Done"
+
+        for ticket in group_tickets:
+            if total_rendered >= max_shown:
+                break
+
+            ticket_id = ticket.get("id", "?")
+            title = ticket.get("title", "Untitled")
+            priority = ticket.get("priority", "unknown").lower()
+            p_emoji = PRIORITY_EMOJI.get(priority, ":white_large_square:")
+            assignee = _get_assignee_display(ticket)
+
+            if is_done:
+                text = f"{p_emoji} ~`{ticket_id}` {title}~\n:bust_in_silhouette: {assignee}"
+            else:
+                text = f"{p_emoji} `{ticket_id}` *{title}*\n:bust_in_silhouette: {assignee}"
+
+            overflow_options = [
+                {
+                    "text": {"type": "plain_text", "text": ":white_check_mark: Mark Done", "emoji": True},
+                    "value": f"mark_done_{ticket_id}",
+                },
+                {
+                    "text": {"type": "plain_text", "text": ":hourglass_flowing_sand: Mark In Progress", "emoji": True},
+                    "value": f"mark_in_progress_{ticket_id}",
+                },
+                {
+                    "text": {"type": "plain_text", "text": ":clipboard: Move to Backlog", "emoji": True},
+                    "value": f"mark_todo_{ticket_id}",
+                },
+                {
+                    "text": {"type": "plain_text", "text": ":link: Open in Tracker", "emoji": True},
+                    "value": f"open_tracker_{ticket_id}",
+                },
+            ]
+
+            # Section with overflow menu (1 block)
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text},
+                "accessory": {
+                    "type": "overflow",
+                    "action_id": f"overflow_{ticket_id}",
+                    "options": overflow_options,
+                },
+            })
+
+            # Actions block with Assign + Update Status buttons (1 block)
+            blocks.append({
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Assign"},
+                        "action_id": f"assign_{ticket_id}",
+                        "value": str(ticket_id),
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Update Status"},
+                        "action_id": f"update_status_{ticket_id}",
+                        "value": str(ticket_id),
+                    },
+                ],
+            })
+
+            total_rendered += 1
+
+        if total_rendered >= max_shown:
+            break
+
+    if truncated:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f":warning: Showing {max_shown} of {len(tickets)} tickets."},
+            ],
+        })
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {"type": "mrkdwn", "text": f":robot_face: Sherpa Bot  |  {now}"},
+        ],
+    })
+
+    return blocks
 
 
 def format_ticket_summary(title: str, status: str, priority: str) -> dict:
