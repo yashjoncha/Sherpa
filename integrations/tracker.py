@@ -19,6 +19,28 @@ class TrackerAPIError(Exception):
         super().__init__(f"Tracker API error {status_code}: {detail}")
 
 
+def get_projects() -> list[dict]:
+    """Fetch all projects from the Tracker API.
+
+    Returns:
+        A list of project dicts (each with at least ``id`` and ``name``).
+
+    Raises:
+        TrackerAPIError: If the API returns a non-2xx status.
+        httpx.ConnectError: If the tracker is unreachable.
+    """
+    url = f"{settings.TRACKER_API_URL}/api/projects/"
+    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
+
+    response = httpx.get(url, headers=headers, timeout=10)
+
+    if response.status_code != 200:
+        raise TrackerAPIError(response.status_code, response.text)
+
+    data = response.json()
+    return data.get("projects", data)
+
+
 def get_tickets_for_user(
     slack_user_id: str,
     status: str | None = None,
@@ -83,6 +105,32 @@ def link_user(slack_user_id: str, username: str) -> tuple[dict, bool]:
 
     data = response.json()
     return data.get("mapping", data), response.status_code == 201
+
+
+def create_ticket(ticket_data: dict) -> dict:
+    """Create a new ticket via the Tracker API.
+
+    Args:
+        ticket_data: Dict with ticket fields. Required: ``title``.
+            Optional: ``description``, ``priority``, ``project``, ``slack_user_id``.
+
+    Returns:
+        The created ticket dict from the API.
+
+    Raises:
+        TrackerAPIError: If the API returns a non-2xx status.
+        httpx.ConnectError: If the tracker is unreachable.
+    """
+    url = f"{settings.TRACKER_API_URL}/api/tickets/"
+    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
+
+    response = httpx.post(url, json=ticket_data, headers=headers, timeout=10)
+
+    if response.status_code not in (200, 201):
+        raise TrackerAPIError(response.status_code, response.text)
+
+    data = response.json()
+    return data.get("ticket", data)
 
 
 def get_all_tickets(
@@ -198,17 +246,102 @@ def get_ticket_summary(slack_user_id: str | None = None) -> dict:
     return response.json()
 
 
+def get_tickets_by_date(target_date: str) -> list[dict]:
+    """Fetch all tickets updated on a specific date.
+
+    Args:
+        target_date: ISO date string (e.g. ``2025-02-20``).
+
+    Returns:
+        A list of ticket dicts that were updated on the given date.
+
+    Raises:
+        TrackerAPIError: If the API returns a non-2xx status.
+        httpx.ConnectError: If the tracker is unreachable.
+    """
+    url = f"{settings.TRACKER_API_URL}/api/tickets/"
+    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
+    params: dict[str, str] = {"date": target_date}
+
+    response = httpx.get(url, params=params, headers=headers, timeout=10)
+
+    if response.status_code != 200:
+        raise TrackerAPIError(response.status_code, response.text)
+
+    data = response.json()
+    tickets = data.get("tickets", data)
+
+    # Client-side filter in case the API ignores the date param
+    filtered = []
+    for t in tickets:
+        updated = t.get("updated_at", "") or ""
+        created = t.get("created_at", "") or ""
+        if updated.startswith(target_date) or created.startswith(target_date):
+            filtered.append(t)
+
+    return filtered if filtered else tickets
+
+
+def get_sprints() -> list[dict]:
+    """Fetch all sprints from the Tracker API.
+
+    Returns:
+        A list of sprint dicts (each with id, name, status, start_date, end_date).
+
+    Raises:
+        TrackerAPIError: If the API returns a non-2xx status.
+        httpx.ConnectError: If the tracker is unreachable.
+    """
+    url = f"{settings.TRACKER_API_URL}/api/sprints/"
+    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
+
+    response = httpx.get(url, headers=headers, timeout=10)
+
+    if response.status_code != 200:
+        raise TrackerAPIError(response.status_code, response.text)
+
+    data = response.json()
+    return data.get("sprints", data)
+
+
+def get_sprint_tickets(sprint_id: int | str) -> list[dict]:
+    """Fetch all tickets for a specific sprint.
+
+    Args:
+        sprint_id: The sprint identifier.
+
+    Returns:
+        A list of ticket dicts for the given sprint.
+
+    Raises:
+        TrackerAPIError: If the API returns a non-2xx status.
+        httpx.ConnectError: If the tracker is unreachable.
+    """
+    url = f"{settings.TRACKER_API_URL}/api/tickets/"
+    headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
+    params = {"sprint": str(sprint_id)}
+
+    response = httpx.get(url, params=params, headers=headers, timeout=10)
+
+    if response.status_code != 200:
+        raise TrackerAPIError(response.status_code, response.text)
+
+    data = response.json()
+    return data.get("tickets", data)
+
+
 def update_ticket(
     ticket_id: str,
-    status: str,
     slack_user_id: str | None = None,
+    **fields,
 ) -> dict:
-    """Update a ticket's status.
+    """Update a ticket's fields.
 
     Args:
         ticket_id: The ticket identifier (e.g. ``BZ-42`` or ``42``).
-        status: The new status to set.
         slack_user_id: Optional Slack user ID of the person making the update.
+        **fields: Arbitrary ticket fields to update (e.g. ``status="done"``,
+            ``priority="high"``).
 
     Returns:
         The updated ticket dict from the API.
@@ -217,13 +350,13 @@ def update_ticket(
         TrackerAPIError: If the API returns a non-2xx status.
         httpx.ConnectError: If the tracker is unreachable.
     """
-    url = f"{settings.TRACKER_API_URL}/api/tickets/{ticket_id}/update/"
+    url = f"{settings.TRACKER_API_URL}/api/tickets/{ticket_id}/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
-    payload: dict[str, str] = {"status": status}
+    payload = dict(fields)
     if slack_user_id:
         payload["slack_user_id"] = slack_user_id
 
-    response = httpx.post(url, json=payload, headers=headers, timeout=10)
+    response = httpx.put(url, json=payload, headers=headers, timeout=10)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)

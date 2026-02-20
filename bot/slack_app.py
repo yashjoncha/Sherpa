@@ -7,8 +7,9 @@ import httpx
 from django.conf import settings
 from slack_bolt import App
 
-from bot.ai import classify_intent
+from bot.router import route
 from integrations.slack_format import (
+    format_eod_summary,
     format_error_message,
     format_link_result,
     format_no_tickets,
@@ -20,9 +21,12 @@ from integrations.slack_format import (
 from integrations.tracker import (
     TrackerAPIError,
     get_all_tickets,
+    get_sprints,
+    get_sprint_tickets,
     get_stale_tickets,
     get_ticket_detail,
     get_ticket_summary,
+    get_tickets_by_date,
     get_tickets_for_user,
     link_user,
     update_ticket,
@@ -276,113 +280,231 @@ def handle_stale(ack, respond, command):
     respond(blocks=format_stale_tickets(tickets, days))
 
 
+@app.command("/eod")
+def handle_eod(ack, respond, command):
+    ack()
+
+    from datetime import date as dt_date
+
+    text = command.get("text", "").strip()
+    target_date = text if text else dt_date.today().isoformat()
+
+    try:
+        tickets = get_tickets_by_date(target_date)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error for EOD summary: %s", exc)
+        respond(blocks=format_error_message(
+            "The tracker returned an error. Please try again later."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for EOD summary")
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    if not tickets:
+        respond(blocks=format_error_message(
+            f"No ticket activity found for *{target_date}*."
+        ))
+        return
+
+    # Build status counts
+    status_counts: dict[str, int] = {}
+    for t in tickets:
+        status = t.get("status", "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    # Prepare ticket data for the LLM
+    ticket_lines = []
+    for t in tickets:
+        tid = t.get("id", "?")
+        title = t.get("title", "Untitled")
+        status = t.get("status", "unknown")
+        priority = t.get("priority", "unknown")
+        assignees = t.get("assignees", [])
+        if isinstance(assignees, list):
+            names = ", ".join(
+                a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
+                for a in assignees
+            ) or "Unassigned"
+        else:
+            names = str(assignees) or "Unassigned"
+        ticket_lines.append(
+            f"- [{tid}] {title} | Status: {status} | Priority: {priority} | Assignees: {names}"
+        )
+
+    ticket_data = "\n".join(ticket_lines)
+
+    from bot.ai.llm import run_completion
+    from bot.ai.prompts import load_prompt
+
+    prompt = load_prompt("eod_summary")
+    prompt = prompt.replace("{date}", target_date)
+    prompt = prompt.replace("{ticket_data}", ticket_data)
+
+    try:
+        narrative = run_completion(prompt, "eod summary", max_tokens=400, temperature=0.3)
+    except Exception:
+        logger.exception("LLM failed for /eod command")
+        respond(blocks=format_error_message(
+            "I couldn't generate the EOD summary. Please try again."
+        ))
+        return
+
+    respond(blocks=format_eod_summary(narrative, target_date, len(tickets), status_counts))
+
+
+@app.command("/retro")
+def handle_retro(ack, respond, command):
+    ack()
+
+    from bot.handlers.complex import (
+        DONE_STATUSES,
+        _compute_sprint_stats,
+        _resolve_sprint,
+    )
+    from integrations.slack_format import format_sprint_retro
+
+    text = command.get("text", "").strip()
+
+    # Build params from the slash command text
+    params: dict[str, str] = {}
+    if text:
+        if text.isdigit():
+            params["sprint_id"] = text
+        else:
+            params["sprint_name"] = text
+
+    try:
+        sprint = _resolve_sprint(params)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error for /retro: %s", exc)
+        respond(blocks=format_error_message(
+            "The tracker returned an error. Please try again later."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for /retro")
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    if not sprint:
+        respond(blocks=format_error_message("No sprints found. Please check your tracker."))
+        return
+
+    sprint_id = sprint.get("id")
+    sprint_name = sprint.get("name", "Unknown")
+
+    try:
+        tickets = get_sprint_tickets(sprint_id)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error fetching sprint tickets: %s", exc)
+        respond(blocks=format_error_message(
+            "The tracker returned an error. Please try again later."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for sprint tickets")
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    if not tickets:
+        respond(blocks=format_error_message(f"No tickets found for sprint *{sprint_name}*."))
+        return
+
+    stats, member_stats = _compute_sprint_stats(tickets)
+
+    # Build ticket breakdown for the LLM
+    ticket_lines = []
+    for t in tickets:
+        tid = t.get("id", "?")
+        title = t.get("title", "Untitled")
+        status = t.get("status", "unknown")
+        priority = t.get("priority", "unknown")
+        sp = t.get("story_points") or 0
+        assignees = t.get("assignees", [])
+        if isinstance(assignees, list):
+            names = ", ".join(
+                a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
+                for a in assignees
+            ) or "Unassigned"
+        else:
+            names = str(assignees) or "Unassigned"
+        ticket_lines.append(f"- [{tid}] {title} | Status: {status} | Priority: {priority} | Points: {sp} | Assignees: {names}")
+
+    # Build member stats text
+    member_lines = []
+    for ms in member_stats:
+        member_lines.append(
+            f"- {ms['name']}: {ms['completed']}/{ms['total']} tickets completed, {ms['points']} story points"
+        )
+
+    # Velocity comparison
+    velocity_text = "No previous sprint data available for comparison."
+    try:
+        sprints = get_sprints()
+        sorted_sprints = sorted(sprints, key=lambda s: s.get("end_date", ""))
+        current_idx = next((i for i, s in enumerate(sorted_sprints) if s.get("id") == sprint_id), -1)
+        if current_idx > 0:
+            prev_sprint = sorted_sprints[current_idx - 1]
+            prev_tickets = get_sprint_tickets(prev_sprint["id"])
+            prev_stats, _ = _compute_sprint_stats(prev_tickets)
+            velocity_text = (
+                f"Previous sprint ({prev_sprint.get('name', '?')}): "
+                f"{prev_stats['points_completed']}/{prev_stats['points_total']} story points, "
+                f"{prev_stats['completion_rate']}% completion rate.\n"
+                f"Current sprint ({sprint_name}): "
+                f"{stats['points_completed']}/{stats['points_total']} story points, "
+                f"{stats['completion_rate']}% completion rate."
+            )
+    except Exception:
+        logger.warning("Could not fetch previous sprint for velocity comparison")
+
+    from bot.ai.llm import run_completion
+    from bot.ai.prompts import load_prompt
+
+    prompt = load_prompt("sprint_retro")
+    prompt = prompt.replace("{sprint_name}", sprint_name)
+    prompt = prompt.replace("{sprint_status}", sprint.get("status", "unknown"))
+    prompt = prompt.replace("{start_date}", sprint.get("start_date", "?"))
+    prompt = prompt.replace("{end_date}", sprint.get("end_date", "?"))
+    prompt = prompt.replace("{total_tickets}", str(stats["total"]))
+    prompt = prompt.replace("{completed_count}", str(stats["completed"]))
+    prompt = prompt.replace("{missed_count}", str(stats["missed"]))
+    prompt = prompt.replace("{points_completed}", str(stats["points_completed"]))
+    prompt = prompt.replace("{points_total}", str(stats["points_total"]))
+    prompt = prompt.replace("{completion_rate}", str(stats["completion_rate"]))
+    prompt = prompt.replace("{member_stats}", "\n".join(member_lines) or "No assignee data available.")
+    prompt = prompt.replace("{ticket_breakdown}", "\n".join(ticket_lines))
+    prompt = prompt.replace("{velocity_data}", velocity_text)
+
+    try:
+        narrative = run_completion(prompt, "sprint retro", max_tokens=600, temperature=0.3)
+    except Exception:
+        logger.exception("LLM failed for /retro command")
+        respond(blocks=format_error_message(
+            "I couldn't generate the retrospective. Please try again."
+        ))
+        return
+
+    respond(blocks=format_sprint_retro(narrative, sprint, stats, member_stats))
+
+
 # ---------------------------------------------------------------------------
 # Natural-language message / mention handlers
 # ---------------------------------------------------------------------------
-
-HELP_TEXT = (
-    ":robot_face: *Hi, I'm Sherpa!* Here's what I can help with:\n\n"
-    "- *My tickets* — \"what tickets are assigned to me?\"\n"
-    "- *All tickets* — \"show all tickets\"\n"
-    "- *Ticket details* — \"show me details for ticket BZ-42\"\n"
-    "- *Summary* — \"give me a summary\"\n"
-    "- *Stale tickets* — \"any stale tickets in the last 7 days?\"\n"
-    "- *Update a ticket* — \"mark ticket BZ-10 as done\"\n\n"
-    "Just message me naturally and I'll figure out the rest!"
-)
-
 
 def _handle_natural_message(text: str, user_id: str, say):
     """Route a natural-language message to the right tracker action."""
     # Strip bot mention markup (e.g. <@U12345>) so the LLM sees clean text
     clean = re.sub(r"<@[A-Z0-9]+>", "", text).strip()
-    if not clean:
-        say(text=HELP_TEXT)
-        return
-
-    result = classify_intent(clean)
-    intent = result["intent"]
-    params = result["params"]
-
-    try:
-        if intent == "my_tickets":
-            tickets = get_tickets_for_user(user_id)
-            if not tickets:
-                say(blocks=format_no_tickets())
-            else:
-                say(blocks=format_tickets_response(tickets))
-
-        elif intent == "all_tickets":
-            tickets = get_all_tickets()
-            if not tickets:
-                say(blocks=format_no_tickets())
-            else:
-                say(blocks=format_tickets_response(tickets, header=":ticket: All Tickets"))
-
-        elif intent == "ticket_detail":
-            ticket_id = params.get("ticket_id", "").strip()
-            if not ticket_id:
-                say(blocks=format_error_message(
-                    "I couldn't find a ticket ID in your message. "
-                    "Try something like: \"show me details for ticket BZ-42\""
-                ))
-                return
-            ticket = get_ticket_detail(ticket_id)
-            say(blocks=format_ticket_detail(ticket))
-
-        elif intent == "summary":
-            summary = get_ticket_summary(user_id)
-            say(blocks=format_summary(summary))
-
-        elif intent == "stale_tickets":
-            days = params.get("days", 3)
-            try:
-                days = int(days)
-            except (TypeError, ValueError):
-                days = 3
-            tickets = get_stale_tickets(days)
-            say(blocks=format_stale_tickets(tickets, days))
-
-        elif intent == "update_ticket":
-            ticket_id = params.get("ticket_id", "").strip()
-            status = params.get("status", "").strip().lower()
-            if not ticket_id or not status:
-                say(blocks=format_error_message(
-                    "I need both a ticket ID and a status. "
-                    "Try: \"mark ticket BZ-10 as done\""
-                ))
-                return
-            if status not in VALID_STATUSES:
-                statuses = ", ".join(f"`{s}`" for s in VALID_STATUSES)
-                say(blocks=format_error_message(
-                    f"`{status}` is not a valid status.\nValid statuses: {statuses}"
-                ))
-                return
-            update_ticket(ticket_id, status, user_id)
-            s_label = status.replace("_", " ").title()
-            say(text=f":white_check_mark: Ticket `{ticket_id}` updated to *{s_label}*.")
-
-        elif intent == "greeting":
-            say(text=f":wave: Hey there! How can I help you today?\n\n{HELP_TEXT}")
-
-        else:
-            say(text=HELP_TEXT)
-
-    except TrackerAPIError as exc:
-        logger.error("Tracker API error (intent=%s): %s", intent, exc)
-        if exc.status_code == 404:
-            say(blocks=format_error_message(
-                "I couldn't find what you're looking for. Please double-check the ticket ID."
-            ))
-        else:
-            say(blocks=format_error_message(
-                "The tracker returned an error. Please try again later."
-            ))
-    except httpx.ConnectError:
-        logger.error("Could not reach tracker (intent=%s)", intent)
-        say(blocks=format_error_message(
-            "Could not reach the tracker. Please try again in a moment."
-        ))
+    route(clean, user_id, say)
 
 
 @app.event("message")
