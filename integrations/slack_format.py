@@ -196,7 +196,9 @@ def format_ticket_detail(ticket: dict) -> list[dict]:
     # Optional metadata fields
     fields: list[dict] = []
     if ticket.get("project"):
-        fields.append({"type": "mrkdwn", "text": f"*Project:* {ticket['project']}"})
+        proj = ticket["project"]
+        proj_name = (proj.get("title") or proj.get("name") or str(proj)) if isinstance(proj, dict) else str(proj)
+        fields.append({"type": "mrkdwn", "text": f"*Project:* {proj_name}"})
     if ticket.get("sprint"):
         fields.append({"type": "mrkdwn", "text": f"*Sprint:* {ticket['sprint']}"})
     if ticket.get("assignees"):
@@ -809,6 +811,8 @@ def format_assignee_suggestion(
     ticket_id = ticket.get("id", "unknown")
     title = ticket.get("title", "Untitled")
     project = ticket.get("project", "Unknown")
+    if isinstance(project, dict):
+        project = project.get("title") or project.get("name") or "Unknown"
     priority = (ticket.get("priority") or "unknown").lower()
     p_emoji = PRIORITY_EMOJI.get(priority, ":grey_question:")
 
