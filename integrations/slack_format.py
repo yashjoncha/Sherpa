@@ -18,10 +18,10 @@ STATUS_EMOJI = {
 }
 
 PRIORITY_EMOJI = {
-    "critical": ":red_circle:",
-    "high": ":orange_circle:",
-    "medium": ":yellow_circle:",
-    "low": ":green_circle:",
+    "critical": ":rotating_light:",
+    "high": ":fire:",
+    "medium": ":large_blue_diamond:",
+    "low": ":white_check_mark:",
 }
 
 
@@ -930,7 +930,10 @@ def format_assignee_suggestion(
     project = ticket.get("project", "Unknown")
     if isinstance(project, dict):
         project = project.get("title") or project.get("name") or "Unknown"
-    priority = (ticket.get("priority") or "unknown").lower()
+    raw_priority = ticket.get("priority") or "unknown"
+    priority = (
+        (raw_priority.get("name") or "unknown") if isinstance(raw_priority, dict) else str(raw_priority)
+    ).lower()
     p_emoji = PRIORITY_EMOJI.get(priority, ":grey_question:")
 
     blocks: list[dict] = [
@@ -984,15 +987,14 @@ def format_assignee_suggestion(
         stats_parts = []
         for c in candidates[:6]:
             stats_parts.append(
-                f"{c['name']}: {c['project_tickets']}P {c['label_overlap']}S "
-                f"{c['active_tickets']}A {c['total_tickets']}T"
+                f"{c['name']}: {c['project_tickets']}P {c['label_overlap']}S {c['total_tickets']}T"
             )
         stats_text = "  |  ".join(stats_parts)
         blocks.append({
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*Team Stats* (P=Project, S=Similar, A=Active, T=Total)\n{stats_text}",
+                "text": f":bar_chart: *Team Stats* (P=Project, S=Similar, T=Total)\n{stats_text}",
             },
         })
 
