@@ -200,15 +200,15 @@ def get_ticket_summary(slack_user_id: str | None = None) -> dict:
 
 def update_ticket(
     ticket_id: str,
-    status: str,
-    slack_user_id: str | None = None,
+    status: str | None = None,
+    assignees: list[str] | None = None,
 ) -> dict:
-    """Update a ticket's status.
+    """Update a ticket's status and/or assignees.
 
     Args:
         ticket_id: The ticket identifier (e.g. ``BZ-42`` or ``42``).
-        status: The new status to set.
-        slack_user_id: Optional Slack user ID of the person making the update.
+        status: Optional new status to set.
+        assignees: Optional list of Slack user IDs to assign.
 
     Returns:
         The updated ticket dict from the API.
@@ -217,13 +217,15 @@ def update_ticket(
         TrackerAPIError: If the API returns a non-2xx status.
         httpx.ConnectError: If the tracker is unreachable.
     """
-    url = f"{settings.TRACKER_API_URL}/api/tickets/{ticket_id}/update/"
+    url = f"{settings.TRACKER_API_URL}/api/tickets/{ticket_id}/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
-    payload: dict[str, str] = {"status": status}
-    if slack_user_id:
-        payload["slack_user_id"] = slack_user_id
+    payload: dict = {}
+    if status:
+        payload["status"] = status
+    if assignees:
+        payload["assignees"] = assignees
 
-    response = httpx.post(url, json=payload, headers=headers, timeout=10)
+    response = httpx.put(url, json=payload, headers=headers, timeout=10)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
