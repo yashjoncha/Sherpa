@@ -11,6 +11,7 @@ from bot.ai.llm import run_completion
 from bot.ai.prompts import load_prompt
 from bot.ai.rag import retrieve_context
 from integrations.slack_format import (
+    format_eod_summary,
     format_error_message,
     format_summary,
     format_ticket_created,
@@ -21,6 +22,7 @@ from integrations.tracker import (
     create_ticket,
     get_projects,
     get_ticket_summary,
+    get_tickets_by_date,
     get_all_tickets,
     get_stale_tickets,
     update_ticket,
@@ -32,6 +34,7 @@ VALID_STATUSES = [
     "planning", "todo", "open", "in_progress", "in_review", "review",
     "done", "completed", "closed", "blocked",
 ]
+VALID_PRIORITIES = ["critical", "high", "medium", "low"]
 
 
 _json_decoder = json.JSONDecoder()
@@ -146,39 +149,55 @@ def handle_create_ticket(message: str, user_id: str, params: dict, say) -> None:
 
 
 def handle_update_ticket(message: str, user_id: str, params: dict, say) -> None:
-    """Update a ticket's status. Uses Stage 1 params, falls back to Stage 2 LLM."""
+    """Update a ticket field. Uses Stage 1 params, falls back to Stage 2 LLM."""
     ticket_id = params.get("ticket_id", "").strip()
-    status = params.get("status", "").strip().lower()
+    field = params.get("field", "").strip().lower()
+    value = params.get("value", "").strip().lower()
+
+    # Backward compat: if classifier returned "status" directly instead of field/value
+    if not field and params.get("status"):
+        field = "status"
+        value = params["status"].strip().lower()
 
     # If Stage 1 missed params, run Stage 2 extraction
-    if not ticket_id or not status:
+    if not ticket_id or not field or not value:
         prompt = load_prompt("update_ticket")
         try:
             raw = run_completion(prompt, message, max_tokens=100, temperature=0.1)
-            fields = _extract_json(raw)
-            if fields:
-                ticket_id = ticket_id or fields.get("ticket_id", "").strip()
-                status = status or fields.get("status", "").strip().lower()
+            extracted = _extract_json(raw)
+            if extracted:
+                ticket_id = ticket_id or extracted.get("ticket_id", "").strip()
+                field = field or extracted.get("field", "").strip().lower()
+                value = value or extracted.get("value", "").strip().lower()
         except Exception:
             logger.exception("Stage 2 extraction failed for update_ticket")
 
-    if not ticket_id or not status:
+    if not ticket_id or not field or not value:
         say(blocks=format_error_message(
-            "I need both a ticket ID and a status. "
-            "Try: \"mark ticket BZ-10 as done\""
+            "I need a ticket ID, a field, and a value. "
+            "Try: \"mark ticket BZ-10 as done\" or \"set priority of BZ-10 to high\""
         ))
         return
 
-    if status not in VALID_STATUSES:
+    # Validate based on field type
+    if field == "status" and value not in VALID_STATUSES:
         statuses = ", ".join(f"`{s}`" for s in VALID_STATUSES)
         say(blocks=format_error_message(
-            f"`{status}` is not a valid status.\nValid statuses: {statuses}"
+            f"`{value}` is not a valid status.\nValid statuses: {statuses}"
         ))
         return
 
-    update_ticket(ticket_id, status, user_id)
-    s_label = status.replace("_", " ").title()
-    say(text=f":white_check_mark: Ticket `{ticket_id}` updated to *{s_label}*.")
+    if field == "priority" and value not in VALID_PRIORITIES:
+        priorities = ", ".join(f"`{p}`" for p in VALID_PRIORITIES)
+        say(blocks=format_error_message(
+            f"`{value}` is not a valid priority.\nValid priorities: {priorities}"
+        ))
+        return
+
+    update_ticket(ticket_id, user_id, **{field: value})
+    label = value.replace("_", " ").title()
+    field_label = field.replace("_", " ").title()
+    say(text=f":white_check_mark: Ticket `{ticket_id}` {field_label} updated to *{label}*.")
 
 
 def handle_smart_assign(message: str, user_id: str, params: dict, say) -> None:
@@ -248,3 +267,57 @@ def handle_sprint_health(message: str, user_id: str, params: dict, say) -> None:
         return
 
     say(blocks=format_sprint_health(analysis, sprint_info))
+
+
+def handle_eod_summary(message: str, user_id: str, params: dict, say) -> None:
+    """Generate an End-of-Day summary for a given date."""
+    target_date = params.get("date") or date.today().isoformat()
+
+    try:
+        tickets = get_tickets_by_date(target_date)
+    except Exception:
+        logger.exception("Failed to fetch tickets for EOD summary")
+        say(blocks=format_error_message("Could not fetch tickets for the EOD summary. Please try again."))
+        return
+
+    if not tickets:
+        say(blocks=format_error_message(f"No ticket activity found for *{target_date}*."))
+        return
+
+    # Build status counts
+    status_counts: dict[str, int] = {}
+    for t in tickets:
+        status = t.get("status", "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    # Prepare ticket data for the LLM
+    ticket_lines = []
+    for t in tickets:
+        tid = t.get("id", "?")
+        title = t.get("title", "Untitled")
+        status = t.get("status", "unknown")
+        priority = t.get("priority", "unknown")
+        assignees = t.get("assignees", [])
+        if isinstance(assignees, list):
+            names = ", ".join(
+                a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
+                for a in assignees
+            ) or "Unassigned"
+        else:
+            names = str(assignees) or "Unassigned"
+        ticket_lines.append(f"- [{tid}] {title} | Status: {status} | Priority: {priority} | Assignees: {names}")
+
+    ticket_data = "\n".join(ticket_lines)
+
+    prompt = load_prompt("eod_summary")
+    prompt = prompt.replace("{date}", target_date)
+    prompt = prompt.replace("{ticket_data}", ticket_data)
+
+    try:
+        narrative = run_completion(prompt, message, max_tokens=400, temperature=0.3)
+    except Exception:
+        logger.exception("LLM failed for eod_summary")
+        say(blocks=format_error_message("I couldn't generate the EOD summary. Please try again."))
+        return
+
+    say(blocks=format_eod_summary(narrative, target_date, len(tickets), status_counts))

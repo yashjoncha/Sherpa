@@ -474,6 +474,51 @@ def format_sprint_health(analysis: str, sprint_info: dict) -> list[dict]:
     return blocks
 
 
+def format_eod_summary(narrative: str, target_date: str, ticket_count: int, status_counts: dict) -> list[dict]:
+    """Format an EOD summary report as Block Kit blocks.
+
+    Args:
+        narrative: The LLM-generated EOD narrative.
+        target_date: The date for the summary (ISO format).
+        ticket_count: Total number of tickets active on that day.
+        status_counts: Dict mapping status to count.
+
+    Returns:
+        A list of Block Kit block dicts.
+    """
+    stats_parts = []
+    for status, count in status_counts.items():
+        emoji = STATUS_EMOJI.get(status, ":grey_question:")
+        label = status.replace("_", " ").title()
+        stats_parts.append(f"{emoji} {label}: *{count}*")
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f":sunset: EOD Summary — {target_date}",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"*{ticket_count} ticket(s)* active  |  " + "  |  ".join(stats_parts) if stats_parts else f"*{ticket_count} ticket(s)* active",
+                },
+            ],
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": narrative},
+        },
+    ]
+    return blocks
+
+
 def format_link_result(mapping: dict, created: bool) -> list[dict]:
     """Format the result of linking a Slack user to a tracker account.
 

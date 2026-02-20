@@ -3,19 +3,39 @@ Extract ticket update details from the user's message.
 
 Output ONLY a JSON object with these fields:
 - "ticket_id": (required) the ticket identifier
-- "status": (required) the new status
-
-Valid statuses: planning, todo, open, in_progress, in_review, review, done, completed, closed, blocked.
+- "field": (required) what to update — one of "status", "priority", "title", "description"
+- "value": (required) the new value for the field
 
 Rules:
 - Output ONLY valid JSON, no extra text.
 - Preserve the exact ticket ID format the user provided.
-- Map casual language to valid statuses (e.g. "finish" -> "done", "start" -> "in_progress", "block" -> "blocked").
+- Map casual language to valid values:
+
+Priority mapping:
+- "p1", "urgent", "critical" → "critical"
+- "p2", "important" → "high"
+- "p3", "normal" → "medium"
+- "p4", "minor", "trivial" → "low"
+
+Status mapping:
+- "finish", "complete", "close" → "done"
+- "start", "begin", "working on" → "in_progress"
+- "block", "stuck" → "blocked"
+- "review", "send for review" → "in_review"
 
 Examples:
 User: "move BZ-42 to in review"
-{"ticket_id": "BZ-42", "status": "in_review"}
+{"ticket_id": "BZ-42", "field": "status", "value": "in_review"}
 
 User: "I finished working on ticket 15"
-{"ticket_id": "15", "status": "done"}
+{"ticket_id": "15", "field": "status", "value": "done"}
+
+User: "update ticket 240 priority to critical"
+{"ticket_id": "240", "field": "priority", "value": "critical"}
+
+User: "change priority of BZ-5 to low"
+{"ticket_id": "BZ-5", "field": "priority", "value": "low"}
+
+User: "rename ticket 12 to Fix login bug"
+{"ticket_id": "12", "field": "title", "value": "Fix login bug"}
 /no_think

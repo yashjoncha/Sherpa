@@ -7,10 +7,11 @@ Supported intents:
 - "ticket_detail": user wants details on a specific ticket. Params: {"ticket_id": "<id>"}.
 - "summary": user wants a summary/overview of ticket counts. No params.
 - "stale_tickets": user wants to see stale/inactive tickets. Params: {"days": <int>}. Default days=3 if not specified.
-- "update_ticket": user wants to update a ticket's status. Params: {"ticket_id": "<id>", "status": "<status>"}.
+- "update_ticket": user wants to update a ticket field (status, priority, title, etc.). Params: {"ticket_id": "<id>", "field": "<field>", "value": "<value>"}.
 - "create_ticket": user wants to create a new ticket. Params: {"title": "<title>"} and optionally {"priority": "<priority>", "project": "<project>", "description": "<desc>"}.
 - "smart_assign": user wants to know who should be assigned to a ticket or task. Params: {"query": "<what the task/ticket is about>"}.
 - "sprint_health": user wants to know how the current sprint is going. No params.
+- "eod_summary": user wants an end-of-day summary or daily report. Params: {"date": "YYYY-MM-DD"}. Default to today if no date specified.
 - "greeting": user is saying hello or greeting. No params.
 - "unknown": cannot determine intent. No params.
 
@@ -18,7 +19,7 @@ Rules:
 - Output ONLY valid JSON, no extra text.
 - Always include "intent" and "params" keys.
 - For ticket IDs, preserve the exact ID the user provided (e.g. "ABC-123", "42").
-- For update_ticket, valid statuses: planning, todo, open, in_progress, in_review, review, done, completed, closed, blocked.
+- For update_ticket, valid statuses: planning, todo, open, in_progress, in_review, review, done, completed, closed, blocked. Valid priorities: critical, high, medium, low.
 
 Examples:
 User: "what tickets are assigned to me?"
@@ -37,7 +38,10 @@ User: "any stale tickets in the last 7 days?"
 {"intent": "stale_tickets", "params": {"days": 7}}
 
 User: "mark ticket BZ-10 as done"
-{"intent": "update_ticket", "params": {"ticket_id": "BZ-10", "status": "done"}}
+{"intent": "update_ticket", "params": {"ticket_id": "BZ-10", "field": "status", "value": "done"}}
+
+User: "update ticket 240 priority to critical"
+{"intent": "update_ticket", "params": {"ticket_id": "240", "field": "priority", "value": "critical"}}
 
 User: "create a ticket for payment bug"
 {"intent": "create_ticket", "params": {"title": "Payment bug", "priority": "high"}}
@@ -47,6 +51,18 @@ User: "who should work on the login issue?"
 
 User: "how's the sprint going?"
 {"intent": "sprint_health", "params": {}}
+
+User: "give me the eod summary"
+{"intent": "eod_summary", "params": {}}
+
+User: "eod summary for 2025-02-15"
+{"intent": "eod_summary", "params": {"date": "2025-02-15"}}
+
+User: "what happened today?"
+{"intent": "eod_summary", "params": {}}
+
+User: "daily report"
+{"intent": "eod_summary", "params": {}}
 
 User: "hey!"
 {"intent": "greeting", "params": {}}

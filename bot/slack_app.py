@@ -9,6 +9,7 @@ from slack_bolt import App
 
 from bot.router import route
 from integrations.slack_format import (
+    format_eod_summary,
     format_error_message,
     format_link_result,
     format_no_tickets,
@@ -23,6 +24,7 @@ from integrations.tracker import (
     get_stale_tickets,
     get_ticket_detail,
     get_ticket_summary,
+    get_tickets_by_date,
     get_tickets_for_user,
     link_user,
     update_ticket,
@@ -274,6 +276,82 @@ def handle_stale(ack, respond, command):
         return
 
     respond(blocks=format_stale_tickets(tickets, days))
+
+
+@app.command("/eod")
+def handle_eod(ack, respond, command):
+    ack()
+
+    from datetime import date as dt_date
+
+    text = command.get("text", "").strip()
+    target_date = text if text else dt_date.today().isoformat()
+
+    try:
+        tickets = get_tickets_by_date(target_date)
+    except TrackerAPIError as exc:
+        logger.error("Tracker API error for EOD summary: %s", exc)
+        respond(blocks=format_error_message(
+            "The tracker returned an error. Please try again later."
+        ))
+        return
+    except httpx.ConnectError:
+        logger.error("Could not reach tracker for EOD summary")
+        respond(blocks=format_error_message(
+            "Could not reach the tracker. Please try again in a moment."
+        ))
+        return
+
+    if not tickets:
+        respond(blocks=format_error_message(
+            f"No ticket activity found for *{target_date}*."
+        ))
+        return
+
+    # Build status counts
+    status_counts: dict[str, int] = {}
+    for t in tickets:
+        status = t.get("status", "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    # Prepare ticket data for the LLM
+    ticket_lines = []
+    for t in tickets:
+        tid = t.get("id", "?")
+        title = t.get("title", "Untitled")
+        status = t.get("status", "unknown")
+        priority = t.get("priority", "unknown")
+        assignees = t.get("assignees", [])
+        if isinstance(assignees, list):
+            names = ", ".join(
+                a.get("name", a.get("username", str(a))) if isinstance(a, dict) else str(a)
+                for a in assignees
+            ) or "Unassigned"
+        else:
+            names = str(assignees) or "Unassigned"
+        ticket_lines.append(
+            f"- [{tid}] {title} | Status: {status} | Priority: {priority} | Assignees: {names}"
+        )
+
+    ticket_data = "\n".join(ticket_lines)
+
+    from bot.ai.llm import run_completion
+    from bot.ai.prompts import load_prompt
+
+    prompt = load_prompt("eod_summary")
+    prompt = prompt.replace("{date}", target_date)
+    prompt = prompt.replace("{ticket_data}", ticket_data)
+
+    try:
+        narrative = run_completion(prompt, "eod summary", max_tokens=400, temperature=0.3)
+    except Exception:
+        logger.exception("LLM failed for /eod command")
+        respond(blocks=format_error_message(
+            "I couldn't generate the EOD summary. Please try again."
+        ))
+        return
+
+    respond(blocks=format_eod_summary(narrative, target_date, len(tickets), status_counts))
 
 
 # ---------------------------------------------------------------------------
