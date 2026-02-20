@@ -12,10 +12,9 @@ logger = logging.getLogger("bot.assignee")
 
 SUGGEST_ASSIGNEE_SYSTEM = """\
 You are a project-management assistant. Given a ticket and candidate project team \
-members with their workload and similar ticket history, pick the best person to assign.
+members with their similar ticket history, pick the best person to assign.
 
-Consider: who worked on similar tickets (strongest signal), current workload \
-(fewer active tickets is better), and overall project experience.
+Consider: who worked on similar tickets (strongest signal) and overall project experience.
 
 Respond ONLY with a JSON object. No extra text.
 /no_think"""
@@ -57,10 +56,6 @@ def suggest_assignee(prompt: str) -> dict:
         "alt_reason": parsed.get("alt_reason", ""),
     }
 
-
-ACTIVE_STATUSES = {
-    "open", "in_progress", "in_review", "review", "todo", "planning", "blocked",
-}
 
 
 def _extract_project_name(project) -> str:
@@ -154,7 +149,7 @@ def build_candidate_profiles(
     target_ticket: dict,
     all_tickets: list[dict],
 ) -> list[dict]:
-    """Build per-assignee candidate profiles with workload and relevance stats.
+    """Build per-assignee candidate profiles with relevance stats.
 
     Only considers candidates from the same project as the target ticket.
 
@@ -164,9 +159,8 @@ def build_candidate_profiles(
 
     Returns:
         A list of candidate dicts sorted by relevance_score descending.
-        Each dict contains: name, key, total_tickets, active_tickets,
-        project_tickets, label_overlap, similarity_score, similar_tickets,
-        relevance_score.
+        Each dict contains: name, key, total_tickets, project_tickets,
+        label_overlap, similarity_score, similar_tickets, relevance_score.
     """
     target_project = _extract_project_name(target_ticket.get("project"))
     target_labels = _extract_label_names(target_ticket)
@@ -189,8 +183,6 @@ def build_candidate_profiles(
         if not isinstance(assignee_list, list):
             assignee_list = [assignee_list]
 
-        raw_status = ticket.get("status") or ""
-        status = (raw_status.get("name") if isinstance(raw_status, dict) else str(raw_status)).lower()
         sim_score, matched_kw = _compute_ticket_similarity(target_labels, target_keywords, ticket)
 
         for assignee in assignee_list:
@@ -199,7 +191,7 @@ def build_candidate_profiles(
                 candidates[key] = {
                     "name": name, "key": key,
                     "project_tickets": 0, "total_tickets": 0,
-                    "active_tickets": 0, "label_overlap": 0,
+                    "label_overlap": 0,
                     "similarity_score": 0.0,
                     "similar_tickets": [],
                 }
@@ -207,9 +199,6 @@ def build_candidate_profiles(
             c = candidates[key]
             c["project_tickets"] += 1
             c["total_tickets"] += 1
-
-            if status in ACTIVE_STATUSES:
-                c["active_tickets"] += 1
 
             ticket_labels = _extract_label_names(ticket)
             if target_labels and ticket_labels:
@@ -231,7 +220,6 @@ def build_candidate_profiles(
             c["similarity_score"] * 3.0
             + c["label_overlap"] * 2.0
             + c["total_tickets"] * 0.5
-            - c["active_tickets"] * 1.5
         )
 
     return sorted(candidates.values(), key=lambda c: c["relevance_score"], reverse=True)
@@ -256,7 +244,7 @@ def build_suggestion_prompt(
     raw_project = target_ticket.get("project", "Unknown")
     project = _extract_project_name(raw_project) or "Unknown"
     raw_priority = target_ticket.get("priority", "unknown")
-    priority = (raw_priority.get("name") if isinstance(raw_priority, dict) else str(raw_priority)) if raw_priority else "unknown"
+    priority = ((raw_priority.get("name") or "unknown") if isinstance(raw_priority, dict) else str(raw_priority)) if raw_priority else "unknown"
     labels = _extract_label_names(target_ticket)
     labels_str = ", ".join(sorted(labels)) if labels else "none"
     desc = (target_ticket.get("description") or "")[:100]
@@ -271,7 +259,7 @@ def build_suggestion_prompt(
 
     for i, c in enumerate(candidates[:max_candidates], 1):
         lines.append(
-            f"{i}. {c['name']} ({c['active_tickets']} active, {c['total_tickets']} total in project)"
+            f"{i}. {c['name']} ({c['total_tickets']} total tickets in project)"
         )
         similar = c.get("similar_tickets", [])
         if similar:
@@ -286,7 +274,7 @@ def build_suggestion_prompt(
 
     lines.append("")
     lines.append(
-        'Pick the best assignee considering similar ticket history and workload. '
+        'Pick the best assignee considering similar ticket history and project experience. '
         'Respond ONLY with JSON: {"assignee": "<name>", "reason": "...", "alternative": "<name>", "alt_reason": "..."}'
     )
 

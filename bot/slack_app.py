@@ -413,8 +413,7 @@ def _get_assignee_suggestion(ticket_id: str) -> list[dict]:
         suggestion = {
             "assignee": c["name"],
             "reason": (
-                f"Only project member — {c['project_tickets']} project tickets, "
-                f"{c['active_tickets']} active{similar_note}"
+                f"Only project member — {c['project_tickets']} project tickets{similar_note}"
             ),
             "alternative": "",
             "alt_reason": "",
@@ -428,7 +427,7 @@ def _get_assignee_suggestion(ticket_id: str) -> list[dict]:
         top = candidates[0]
         suggestion = {
             "assignee": top["name"],
-            "reason": "Highest relevance score based on similar ticket history and workload",
+            "reason": "Highest relevance score based on similar ticket history",
             "alternative": candidates[1]["name"] if len(candidates) > 1 else "",
             "alt_reason": "Second highest relevance score",
         }
