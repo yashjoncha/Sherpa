@@ -35,7 +35,7 @@ def _ticket_matches_project(ticket: dict, project_filter: str) -> bool:
     proj = ticket.get("project")
     if not proj:
         return False
-    proj_name = proj.get("name", "") if isinstance(proj, dict) else str(proj)
+    proj_name = (proj.get("title") or proj.get("name") or "") if isinstance(proj, dict) else str(proj)
     return proj_name.lower() == project_filter.lower()
 
 
@@ -265,5 +265,10 @@ def vscode_projects(request):
     except TrackerAPIError as e:
         logger.error("Tracker API error: %s", e)
         return Response({"error": "Failed to fetch projects"}, status=502)
+
+    projects = [
+        {**p, "name": p.get("title") or p.get("name") or ""}
+        for p in projects
+    ]
 
     return Response({"projects": projects})
