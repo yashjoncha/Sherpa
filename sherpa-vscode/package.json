@@ -10,8 +10,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:sherpaMyTickets",
-    "onView:sherpaAllTickets"
+    "onView:sherpaMyTickets"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -29,10 +28,6 @@
         {
           "id": "sherpaMyTickets",
           "name": "My Tickets"
-        },
-        {
-          "id": "sherpaAllTickets",
-          "name": "All Tickets"
         }
       ]
     },
@@ -40,11 +35,6 @@
       {
         "command": "sherpa.refreshTickets",
         "title": "Sherpa: Refresh My Tickets",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "sherpa.refreshAllTickets",
-        "title": "Sherpa: Refresh All Tickets",
         "icon": "$(refresh)"
       },
       {
@@ -87,21 +77,6 @@
         {
           "command": "sherpa.filterByProject",
           "when": "view == sherpaMyTickets",
-          "group": "navigation"
-        },
-        {
-          "command": "sherpa.refreshAllTickets",
-          "when": "view == sherpaAllTickets",
-          "group": "navigation"
-        },
-        {
-          "command": "sherpa.createTicket",
-          "when": "view == sherpaAllTickets",
-          "group": "navigation"
-        },
-        {
-          "command": "sherpa.filterByProject",
-          "when": "view == sherpaAllTickets",
           "group": "navigation"
         }
       ],

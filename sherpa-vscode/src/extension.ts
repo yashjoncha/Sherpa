@@ -8,14 +8,11 @@ import { detectWorkspace, matchProject } from "./workspace";
 
 export function activate(context: vscode.ExtensionContext) {
   const myProvider = new TicketProvider("my");
-  const allProvider = new TicketProvider("all");
 
   vscode.window.registerTreeDataProvider("sherpaMyTickets", myProvider);
-  vscode.window.registerTreeDataProvider("sherpaAllTickets", allProvider);
 
   function refreshAll() {
     myProvider.refresh();
-    allProvider.refresh();
   }
 
   // Auto-detect workspace project on activation
@@ -36,7 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (matched) {
           log.appendLine(`Matched project: "${matched.name}"`);
           myProvider.setProjectFilter(matched.name);
-          allProvider.setProjectFilter(matched.name);
+
         } else {
           // Tier 4: AI-powered matching
           const projectNames = cachedProjects.map((p) => p.name);
@@ -44,7 +41,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (aiMatch) {
             log.appendLine(`AI match → "${aiMatch}"`);
             myProvider.setProjectFilter(aiMatch);
-            allProvider.setProjectFilter(aiMatch);
+
           } else {
             log.appendLine(`No project matched for repo "${ws.repoName}" (string + AI)`);
           }
@@ -69,10 +66,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("sherpa.refreshTickets", () => {
       myProvider.refresh();
     }),
-    vscode.commands.registerCommand("sherpa.refreshAllTickets", () => {
-      allProvider.refresh();
-    }),
-
     // Open ticket detail
     vscode.commands.registerCommand("sherpa.openTicket", (ticket: Ticket) => {
       showTicketPanel(ticket, context.extensionUri, refreshAll);
@@ -108,10 +101,8 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (picked.label.includes("Show All")) {
           myProvider.setProjectFilter(undefined);
-          allProvider.setProjectFilter(undefined);
         } else {
           myProvider.setProjectFilter(picked.label);
-          allProvider.setProjectFilter(picked.label);
         }
       } catch (err: any) {
         vscode.window.showErrorMessage(`Sherpa: ${err.message}`);
