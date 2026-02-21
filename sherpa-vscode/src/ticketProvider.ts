@@ -25,7 +25,18 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
   >();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
+  private _projectFilter: string | undefined;
+
   constructor(private mode: "my" | "all") {}
+
+  setProjectFilter(project: string | undefined): void {
+    this._projectFilter = project;
+    this._onDidChangeTreeData.fire();
+  }
+
+  getProjectFilter(): string | undefined {
+    return this._projectFilter;
+  }
 
   refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -38,7 +49,9 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
   async getChildren(): Promise<TicketItem[]> {
     try {
       const tickets =
-        this.mode === "my" ? await fetchMyTickets() : await fetchAllTickets();
+        this.mode === "my"
+          ? await fetchMyTickets(this._projectFilter)
+          : await fetchAllTickets(this._projectFilter);
       return tickets.map((t) => new TicketItem(t));
     } catch (err: any) {
       vscode.window.showErrorMessage(`Sherpa: ${err.message}`);

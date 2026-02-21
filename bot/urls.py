@@ -17,4 +17,5 @@ urlpatterns = [
     path("vscode/tickets/<str:ticket_id>/", views.vscode_ticket_detail_or_update, name="vscode_ticket_detail_or_update"),
     path("vscode/members/", views.vscode_members, name="vscode_members"),
     path("vscode/sprints/", views.vscode_sprints, name="vscode_sprints"),
+    path("vscode/projects/", views.vscode_projects, name="vscode_projects"),
 ]

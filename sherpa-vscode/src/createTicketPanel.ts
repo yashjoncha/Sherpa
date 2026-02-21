@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
-import { Member } from "./tickets";
-import { createTicket, fetchMembers } from "./api";
+import { Member, Project } from "./tickets";
+import { createTicket, fetchMembers, fetchProjects } from "./api";
+import { detectWorkspace, matchProject } from "./workspace";
 
 const PRIORITIES = ["critical", "high", "medium", "low"];
 
@@ -9,10 +10,21 @@ export async function showCreateTicketPanel(
   onRefresh: () => void
 ) {
   let members: Member[] = [];
+  let projects: Project[] = [];
   try {
-    members = await fetchMembers();
+    [members, projects] = await Promise.all([fetchMembers(), fetchProjects()]);
   } catch {
-    // Non-critical — form still works without assignee list
+    // Non-critical — form still works without these lists
+  }
+
+  let matchedProject: Project | undefined;
+  try {
+    const ws = await detectWorkspace();
+    if (ws.repoName) {
+      matchedProject = matchProject(ws.repoName, projects);
+    }
+  } catch {
+    // Workspace detection is best-effort
   }
 
   const panel = vscode.window.createWebviewPanel(
@@ -22,7 +34,7 @@ export async function showCreateTicketPanel(
     { enableScripts: true }
   );
 
-  panel.webview.html = getHtml(members);
+  panel.webview.html = getHtml(members, projects, matchedProject);
 
   panel.webview.onDidReceiveMessage(async (msg) => {
     if (msg.type === "create") {
@@ -49,7 +61,11 @@ function escapeHtml(val: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-function getHtml(members: Member[]): string {
+function getHtml(
+  members: Member[],
+  projects: Project[],
+  matchedProject?: Project
+): string {
   const priorityOptions = PRIORITIES.map(
     (p) => `<option value="${p}">${p.charAt(0).toUpperCase() + p.slice(1)}</option>`
   ).join("");
@@ -59,6 +75,13 @@ function getHtml(members: Member[]): string {
       (m) =>
         `<option value="${m.slack_user_id}">${escapeHtml(m.display_name)} (${escapeHtml(m.github_username)})</option>`
     )
+    .join("");
+
+  const projectOptions = projects
+    .map((p) => {
+      const selected = matchedProject && String(p.id) === String(matchedProject.id) ? " selected" : "";
+      return `<option value="${escapeHtml(String(p.id))}"${selected}>${escapeHtml(p.name)}</option>`;
+    })
     .join("");
 
   return `<!DOCTYPE html>
@@ -132,6 +155,13 @@ function getHtml(members: Member[]): string {
       </div>
     </div>
     <div class="field">
+      <span class="field-label">Project</span>
+      <select id="project_id">
+        <option value="">— Select Project —</option>
+        ${projectOptions}
+      </select>
+    </div>
+    <div class="field">
       <span class="field-label">Assign to</span>
       <select id="assignee">
         <option value="">— Unassigned —</option>
@@ -155,6 +185,8 @@ function getHtml(members: Member[]): string {
       if (pri) payload.priority = pri;
       const sp = Number(document.getElementById("story_points").value);
       if (sp) payload.story_points = sp;
+      const projectId = document.getElementById("project_id").value;
+      if (projectId) payload.project = projectId;
       const assignee = document.getElementById("assignee").value;
       if (assignee) payload.assignee = assignee;
       vscode.postMessage({ type: "create", payload });

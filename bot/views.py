@@ -15,6 +15,7 @@ from integrations.tracker import (
     TrackerAPIError,
     create_ticket,
     get_all_tickets,
+    get_projects,
     get_sprints,
     get_ticket_detail,
     get_tickets_for_user,
@@ -28,6 +29,15 @@ logger = logging.getLogger("bot.views")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _ticket_matches_project(ticket: dict, project_filter: str) -> bool:
+    """Check whether a ticket belongs to the given project (case-insensitive)."""
+    proj = ticket.get("project")
+    if not proj:
+        return False
+    proj_name = proj.get("name", "") if isinstance(proj, dict) else str(proj)
+    return proj_name.lower() == project_filter.lower()
+
 
 def _resolve_member(request):
     """Extract GitHub token, verify it, and return (or auto-create) the Member.
@@ -121,12 +131,16 @@ def vscode_my_tickets(request):
 
     status = request.query_params.get("status")
     priority = request.query_params.get("priority")
+    project = request.query_params.get("project")
 
     try:
         tickets = get_tickets_for_user(member.slack_user_id, status=status, priority=priority)
     except TrackerAPIError as e:
         logger.error("Tracker API error: %s", e)
         return Response({"error": "Failed to fetch tickets from tracker"}, status=502)
+
+    if project:
+        tickets = [t for t in tickets if _ticket_matches_project(t, project)]
 
     return Response({"tickets": tickets})
 
@@ -140,12 +154,16 @@ def vscode_all_tickets(request):
 
     status = request.query_params.get("status")
     priority = request.query_params.get("priority")
+    project = request.query_params.get("project")
 
     try:
         tickets = get_all_tickets(status=status, priority=priority)
     except TrackerAPIError as e:
         logger.error("Tracker API error: %s", e)
         return Response({"error": "Failed to fetch tickets from tracker"}, status=502)
+
+    if project:
+        tickets = [t for t in tickets if _ticket_matches_project(t, project)]
 
     return Response({"tickets": tickets})
 
@@ -233,3 +251,19 @@ def vscode_sprints(request):
         return Response({"error": "Failed to fetch sprints"}, status=502)
 
     return Response({"sprints": sprints})
+
+
+@api_view(["GET"])
+def vscode_projects(request):
+    """Return all projects from the tracker."""
+    member, err = _resolve_member(request)
+    if err:
+        return err
+
+    try:
+        projects = get_projects()
+    except TrackerAPIError as e:
+        logger.error("Tracker API error: %s", e)
+        return Response({"error": "Failed to fetch projects"}, status=502)
+
+    return Response({"projects": projects})

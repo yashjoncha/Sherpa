@@ -30,6 +30,11 @@ export interface Sprint {
   end_date?: string;
 }
 
+export interface Project {
+  id: number | string;
+  name: string;
+}
+
 export interface CreateTicketPayload {
   title: string;
   description?: string;

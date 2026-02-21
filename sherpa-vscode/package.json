@@ -65,6 +65,11 @@
         "command": "sherpa.assignTicket",
         "title": "Sherpa: Assign Ticket",
         "icon": "$(person-add)"
+      },
+      {
+        "command": "sherpa.filterByProject",
+        "title": "Sherpa: Filter by Project",
+        "icon": "$(filter)"
       }
     ],
     "menus": {
@@ -80,12 +85,22 @@
           "group": "navigation"
         },
         {
+          "command": "sherpa.filterByProject",
+          "when": "view == sherpaMyTickets",
+          "group": "navigation"
+        },
+        {
           "command": "sherpa.refreshAllTickets",
           "when": "view == sherpaAllTickets",
           "group": "navigation"
         },
         {
           "command": "sherpa.createTicket",
+          "when": "view == sherpaAllTickets",
+          "group": "navigation"
+        },
+        {
+          "command": "sherpa.filterByProject",
           "when": "view == sherpaAllTickets",
           "group": "navigation"
         }

@@ -2,8 +2,9 @@ import * as vscode from "vscode";
 import { TicketProvider, TicketItem } from "./ticketProvider";
 import { showTicketPanel } from "./ticketPanel";
 import { showCreateTicketPanel } from "./createTicketPanel";
-import { Ticket } from "./tickets";
-import { updateTicket, fetchMembers } from "./api";
+import { Ticket, Project } from "./tickets";
+import { updateTicket, fetchMembers, fetchProjects } from "./api";
+import { detectWorkspace, matchProject } from "./workspace";
 
 export function activate(context: vscode.ExtensionContext) {
   const myProvider = new TicketProvider("my");
@@ -16,6 +17,43 @@ export function activate(context: vscode.ExtensionContext) {
     myProvider.refresh();
     allProvider.refresh();
   }
+
+  // Auto-detect workspace project on activation
+  let cachedProjects: Project[] = [];
+  const log = vscode.window.createOutputChannel("Sherpa");
+
+  async function autoDetectAndFilter() {
+    log.appendLine("Sherpa: starting workspace detection...");
+    try {
+      const ws = await detectWorkspace();
+      log.appendLine(`Workspace — repo: "${ws.repoName}", folder: "${ws.folderName}", branch: "${ws.branch}"`);
+
+      cachedProjects = await fetchProjects();
+      log.appendLine(`Fetched ${cachedProjects.length} projects: ${cachedProjects.map((p) => p.name).join(", ")}`);
+
+      if (ws.repoName) {
+        const matched = matchProject(ws.repoName, cachedProjects);
+        if (matched) {
+          log.appendLine(`Matched project: "${matched.name}"`);
+          myProvider.setProjectFilter(matched.name);
+          allProvider.setProjectFilter(matched.name);
+        } else {
+          log.appendLine(`No project matched for repo "${ws.repoName}"`);
+        }
+      }
+    } catch (err: any) {
+      log.appendLine(`autoDetectAndFilter error: ${err.message}`);
+    }
+  }
+
+  autoDetectAndFilter();
+
+  // Re-detect when workspace folders change
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      autoDetectAndFilter();
+    })
+  );
 
   context.subscriptions.push(
     // Refresh
@@ -34,6 +72,41 @@ export function activate(context: vscode.ExtensionContext) {
     // Create ticket
     vscode.commands.registerCommand("sherpa.createTicket", () => {
       showCreateTicketPanel(context.extensionUri, refreshAll);
+    }),
+
+    // Filter by project
+    vscode.commands.registerCommand("sherpa.filterByProject", async () => {
+      try {
+        if (cachedProjects.length === 0) {
+          cachedProjects = await fetchProjects();
+        }
+
+        const items: vscode.QuickPickItem[] = [
+          { label: "$(clear-all) Show All", description: "Remove project filter" },
+          ...cachedProjects.map((p) => ({
+            label: p.name,
+            description: myProvider.getProjectFilter() === p.name ? "(active)" : "",
+          })),
+        ];
+
+        const picked = await vscode.window.showQuickPick(items, {
+          placeHolder: "Filter tickets by project",
+        });
+
+        if (!picked) {
+          return;
+        }
+
+        if (picked.label.includes("Show All")) {
+          myProvider.setProjectFilter(undefined);
+          allProvider.setProjectFilter(undefined);
+        } else {
+          myProvider.setProjectFilter(picked.label);
+          allProvider.setProjectFilter(picked.label);
+        }
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Sherpa: ${err.message}`);
+      }
     }),
 
     // Quick-pick: Change status
