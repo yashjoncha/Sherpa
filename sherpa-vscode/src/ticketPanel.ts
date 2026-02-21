@@ -135,19 +135,18 @@ function getHtml(ticket: Ticket, members: Member[]): string {
       `<option value="${p}" ${p === ticket.priority ? "selected" : ""}>${priorityEmoji[p] ?? "⚪"} ${p.charAt(0).toUpperCase() + p.slice(1)}</option>`
   ).join("");
 
-  // Resolve current assignee names and try to match to a member slack_user_id
-  const assigneeNames = (ticket.assignees ?? []).map((a: any) =>
-    typeof a === "string" ? a : a.display_name || a.username || a.name || ""
-  );
-
   // Try to find which member matches current assignee
   let currentAssigneeSlackId = "";
-  if (assigneeNames.length > 0) {
-    const firstName = assigneeNames[0].toLowerCase();
+  const assignees = ticket.assignees ?? [];
+  if (assignees.length > 0) {
+    const first: any = assignees[0];
+    const name = typeof first === "string" ? first : first.display_name || first.username || first.name || "";
+    const nameLower = name.toLowerCase();
     const match = members.find(
       (m) =>
-        m.display_name.toLowerCase() === firstName ||
-        m.github_username.toLowerCase() === firstName
+        m.slack_user_id === name ||
+        m.display_name.toLowerCase() === nameLower ||
+        m.github_username.toLowerCase() === nameLower
     );
     if (match) currentAssigneeSlackId = match.slack_user_id;
   }

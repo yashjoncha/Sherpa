@@ -10,7 +10,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:sherpaMyTickets"
+    "onView:sherpaMyTickets",
+    "onView:sherpaAllTickets"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -28,6 +29,10 @@
         {
           "id": "sherpaMyTickets",
           "name": "My Tickets"
+        },
+        {
+          "id": "sherpaAllTickets",
+          "name": "All Tickets"
         }
       ]
     },
@@ -35,6 +40,11 @@
       {
         "command": "sherpa.refreshTickets",
         "title": "Sherpa: Refresh My Tickets",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sherpa.refreshAllTickets",
+        "title": "Sherpa: Refresh All Tickets",
         "icon": "$(refresh)"
       },
       {
@@ -50,11 +60,6 @@
         "command": "sherpa.updateTicketStatus",
         "title": "Sherpa: Change Status",
         "icon": "$(symbol-event)"
-      },
-      {
-        "command": "sherpa.assignTicket",
-        "title": "Sherpa: Assign Ticket",
-        "icon": "$(person-add)"
       },
       {
         "command": "sherpa.filterByProject",
@@ -78,6 +83,16 @@
           "command": "sherpa.filterByProject",
           "when": "view == sherpaMyTickets",
           "group": "navigation"
+        },
+        {
+          "command": "sherpa.refreshAllTickets",
+          "when": "view == sherpaAllTickets",
+          "group": "navigation"
+        },
+        {
+          "command": "sherpa.createTicket",
+          "when": "view == sherpaAllTickets",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -88,10 +103,6 @@
         },
         {
           "command": "sherpa.updateTicketStatus",
-          "when": "viewItem == ticket"
-        },
-        {
-          "command": "sherpa.assignTicket",
           "when": "viewItem == ticket"
         }
       ]

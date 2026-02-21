@@ -3,16 +3,19 @@ import { TicketProvider, TicketItem } from "./ticketProvider";
 import { showTicketPanel } from "./ticketPanel";
 import { showCreateTicketPanel } from "./createTicketPanel";
 import { Ticket, Project } from "./tickets";
-import { updateTicket, fetchMembers, fetchProjects, fetchAIProjectMatch } from "./api";
+import { updateTicket, fetchProjects, fetchAIProjectMatch } from "./api";
 import { detectWorkspace, matchProject } from "./workspace";
 
 export function activate(context: vscode.ExtensionContext) {
   const myProvider = new TicketProvider("my");
+  const allProvider = new TicketProvider("all");
 
   vscode.window.registerTreeDataProvider("sherpaMyTickets", myProvider);
+  vscode.window.registerTreeDataProvider("sherpaAllTickets", allProvider);
 
   function refreshAll() {
     myProvider.refresh();
+    allProvider.refresh();
   }
 
   // Auto-detect workspace project on activation
@@ -65,6 +68,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Refresh
     vscode.commands.registerCommand("sherpa.refreshTickets", () => {
       myProvider.refresh();
+    }),
+    vscode.commands.registerCommand("sherpa.refreshAllTickets", () => {
+      allProvider.refresh();
     }),
     // Open ticket detail
     vscode.commands.registerCommand("sherpa.openTicket", (ticket: Ticket) => {
@@ -139,35 +145,6 @@ export function activate(context: vscode.ExtensionContext) {
       }
     ),
 
-    // Quick-pick: Assign ticket
-    vscode.commands.registerCommand(
-      "sherpa.assignTicket",
-      async (item: TicketItem) => {
-        try {
-          const members = await fetchMembers();
-          const picks = members.map((m) => ({
-            label: m.display_name,
-            description: m.github_username,
-            slackId: m.slack_user_id,
-          }));
-
-          const picked = await vscode.window.showQuickPick(picks, {
-            placeHolder: `Assign ${item.ticket.task_id} to…`,
-          });
-          if (!picked) return;
-
-          await updateTicket(item.ticket.task_id, {
-            assignee: picked.slackId,
-          });
-          vscode.window.showInformationMessage(
-            `${item.ticket.task_id} assigned to ${picked.label}`
-          );
-          refreshAll();
-        } catch (err: any) {
-          vscode.window.showErrorMessage(`Sherpa: ${err.message}`);
-        }
-      }
-    )
   );
 }
 

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { Ticket } from "./tickets";
-import { fetchMyTickets, fetchAllTickets } from "./api";
+import { fetchMyTickets } from "./api";
 
 const statusIcons: Record<string, vscode.ThemeIcon> = {
   open: new vscode.ThemeIcon("circle-large-outline"),
@@ -51,7 +51,7 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
       const tickets =
         this.mode === "my"
           ? await fetchMyTickets(this._projectFilter)
-          : await fetchAllTickets(this._projectFilter);
+          : await fetchMyTickets();
       return tickets.map((t) => new TicketItem(t));
     } catch (err: any) {
       vscode.window.showErrorMessage(`Sherpa: ${err.message}`);
