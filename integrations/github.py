@@ -13,14 +13,14 @@ class GitHubAuthError(Exception):
     """Raised when a GitHub token is invalid or the API call fails."""
 
 
-def verify_github_token(token: str) -> str:
-    """Verify a GitHub OAuth token and return the authenticated username.
+def verify_github_token(token: str) -> dict:
+    """Verify a GitHub OAuth token and return the authenticated user's profile.
 
     Args:
         token: GitHub OAuth access token from VS Code.
 
     Returns:
-        The GitHub username associated with the token.
+        A dict with keys ``username``, ``name``, and ``email``.
 
     Raises:
         GitHubAuthError: If the token is invalid or the API is unreachable.
@@ -40,11 +40,36 @@ def verify_github_token(token: str) -> str:
     if response.status_code != 200:
         raise GitHubAuthError(f"GitHub token invalid (HTTP {response.status_code})")
 
-    login = response.json().get("login")
+    data = response.json()
+    login = data.get("login")
     if not login:
         raise GitHubAuthError("GitHub API did not return a username")
 
-    return login
+    email = data.get("email") or ""
+
+    if not email:
+        try:
+            emails_resp = httpx.get(
+                "https://api.github.com/user/emails",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                timeout=10,
+            )
+            if emails_resp.status_code == 200:
+                for entry in emails_resp.json():
+                    if entry.get("primary"):
+                        email = entry.get("email", "")
+                        break
+        except httpx.HTTPError:
+            logger.debug("Failed to fetch /user/emails, continuing without email")
+
+    return {
+        "username": login,
+        "name": data.get("name") or login,
+        "email": email,
+    }
 
 
 class GitHubClient:

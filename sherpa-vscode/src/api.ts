@@ -35,13 +35,6 @@ async function apiFetch(
 
   const response = await fetch(url, init);
 
-  if (response.status === 404) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(
-      body.error || "Your GitHub account is not linked. Ask your admin to add you."
-    );
-  }
-
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error || `HTTP ${response.status}`);

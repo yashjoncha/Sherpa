@@ -1,10 +1,10 @@
 """View functions for health checks, Slack event ingestion, and VS Code API."""
 
-import json
 import logging
-from pathlib import Path
 
 from django.conf import settings
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 from django.http import FileResponse, JsonResponse
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -18,6 +18,7 @@ from integrations.tracker import (
     get_sprints,
     get_ticket_detail,
     get_tickets_for_user,
+    link_user,
     update_ticket,
 )
 
@@ -29,7 +30,7 @@ logger = logging.getLogger("bot.views")
 # ---------------------------------------------------------------------------
 
 def _resolve_member(request):
-    """Extract GitHub token from Authorization header, verify it, and return the Member.
+    """Extract GitHub token, verify it, and return (or auto-create) the Member.
 
     Returns:
         A tuple of (Member, None) on success, or (None, Response) on failure.
@@ -43,18 +44,35 @@ def _resolve_member(request):
     github_token = auth_header[len("Bearer "):]
 
     try:
-        github_username = verify_github_token(github_token)
+        gh_user = verify_github_token(github_token)
     except GitHubAuthError as e:
         logger.warning("GitHub auth failed: %s", e)
         return None, Response({"error": str(e)}, status=401)
 
-    try:
-        member = Member.objects.get(github_username=github_username)
-    except Member.DoesNotExist:
-        return None, Response(
-            {"error": f"No Sherpa member found for GitHub user '{github_username}'"},
-            status=404,
-        )
+    member, created = Member.objects.get_or_create(
+        github_username=gh_user["username"],
+        defaults={
+            "display_name": gh_user["name"],
+            "email": gh_user["email"],
+        },
+    )
+    if created:
+        logger.info("Auto-registered member %s", member)
+
+    if member.email and not member.slack_user_id and settings.SLACK_BOT_TOKEN:
+        try:
+            slack = WebClient(token=settings.SLACK_BOT_TOKEN)
+            resp = slack.users_lookupByEmail(email=member.email)
+            member.slack_user_id = resp["user"]["id"]
+            member.save(update_fields=["slack_user_id"])
+            logger.info("Linked Slack user %s for %s", member.slack_user_id, member)
+            # Sync to tracker so /api/my-tickets/ recognises this Slack ID
+            try:
+                link_user(member.slack_user_id, member.email)
+            except Exception:
+                logger.debug("Tracker link_user failed for %s", member)
+        except SlackApiError as e:
+            logger.debug("Slack email lookup failed for %s: %s", member.email, e)
 
     return member, None
 
@@ -97,6 +115,9 @@ def vscode_my_tickets(request):
     member, err = _resolve_member(request)
     if err:
         return err
+
+    if not member.slack_user_id:
+        return Response({"tickets": [], "warning": "Slack account not linked yet"})
 
     status = request.query_params.get("status")
     priority = request.query_params.get("priority")
@@ -144,7 +165,7 @@ def vscode_ticket_detail_or_update(request, ticket_id):
         # PUT — update
         fields = request.data or {}
         logger.info("UPDATE %s — sending fields: %s", ticket_id, dict(fields))
-        result = update_ticket(ticket_id, slack_user_id=member.slack_user_id, **fields)
+        result = update_ticket(ticket_id, slack_user_id=member.slack_user_id or "", **fields)
         logger.info("UPDATE %s — tracker returned: %s", ticket_id, result)
         return Response({"ticket": result})
 
@@ -165,7 +186,8 @@ def vscode_create_ticket(request):
         return Response({"error": "title is required"}, status=400)
 
     # Attach the member's slack_user_id so tracker can assign ownership
-    data.setdefault("slack_user_id", member.slack_user_id)
+    if member.slack_user_id:
+        data.setdefault("slack_user_id", member.slack_user_id)
 
     try:
         ticket = create_ticket(data)
@@ -190,7 +212,7 @@ def vscode_members(request):
                 "id": m.id,
                 "display_name": m.display_name,
                 "github_username": m.github_username,
-                "slack_user_id": m.slack_user_id,
+                "slack_user_id": m.slack_user_id or "",
             }
             for m in members
         ]

@@ -78,12 +78,12 @@ def get_tickets_for_user(
     return data.get("tickets", data)
 
 
-def link_user(slack_user_id: str, username: str) -> tuple[dict, bool]:
-    """Link a Slack user to a BlazikenTracker account.
+def link_user(slack_user_id: str, email: str) -> tuple[dict, bool]:
+    """Link a Slack user to a BlazikenTracker account by email.
 
     Args:
-        slack_user_id: The Slack user ID (e.g. ``U0AGM5ZLKG8``).
-        username: The BlazikenTracker username to link.
+        slack_user_id: The Slack user ID (e.g. ``U07EU26D84B``).
+        email: The user's email address (used to match the tracker account).
 
     Returns:
         A tuple of (mapping dict, created) where *created* is ``True``
@@ -96,7 +96,7 @@ def link_user(slack_user_id: str, username: str) -> tuple[dict, bool]:
     """
     url = f"{settings.TRACKER_API_URL}/api/link-user/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
-    payload = {"slack_user_id": slack_user_id, "username": username}
+    payload = {"slack_user_id": slack_user_id, "email": email}
 
     response = httpx.post(url, json=payload, headers=headers, timeout=10)
 

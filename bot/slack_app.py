@@ -91,13 +91,28 @@ VALID_STATUSES = [
 
 
 @app.command("/link-user")
-def handle_link(ack, respond, command):
+def handle_link(ack, respond, command, client):
     ack()
 
     user_id = command["user_id"]
-    username = command["user_name"]
+    # Look up the user's email — the unique key across all systems
     try:
-        mapping, created = link_user(user_id, username)
+        user_info = client.users_info(user=user_id)
+        email = user_info["user"]["profile"].get("email", "")
+    except Exception:
+        respond(blocks=format_error_message(
+            "Could not retrieve your email from Slack. Please ensure your email is set in your Slack profile."
+        ))
+        return
+
+    if not email:
+        respond(blocks=format_error_message(
+            "No email found on your Slack profile. Please set your email and try again."
+        ))
+        return
+
+    try:
+        mapping, created = link_user(user_id, email)
     except TrackerAPIError as exc:
         logger.error("Tracker API error linking user %s: %s", user_id, exc)
         respond(blocks=format_error_message(
