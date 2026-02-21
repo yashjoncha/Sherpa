@@ -87,11 +87,6 @@
           "group": "inline"
         },
         {
-          "command": "sherpa.assignTicket",
-          "when": "viewItem == ticket",
-          "group": "inline"
-        },
-        {
           "command": "sherpa.updateTicketStatus",
           "when": "viewItem == ticket"
         },
@@ -121,6 +116,6 @@
     "@types/node": "^18.19.130",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.0.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.9.3"
   }
 }
