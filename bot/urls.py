@@ -18,4 +18,5 @@ urlpatterns = [
     path("vscode/members/", views.vscode_members, name="vscode_members"),
     path("vscode/sprints/", views.vscode_sprints, name="vscode_sprints"),
     path("vscode/projects/", views.vscode_projects, name="vscode_projects"),
+    path("vscode/match-project/", views.vscode_match_project, name="vscode_match_project"),
 ]

@@ -11,6 +11,7 @@ from rest_framework.response import Response
 
 from bot.models import Member
 from integrations.github import GitHubAuthError, verify_github_token
+from bot.ai.project_matcher import match_project_ai
 from integrations.tracker import (
     TrackerAPIError,
     create_ticket,
@@ -251,6 +252,23 @@ def vscode_sprints(request):
         return Response({"error": "Failed to fetch sprints"}, status=502)
 
     return Response({"sprints": sprints})
+
+
+@api_view(["POST"])
+def vscode_match_project(request):
+    """Use the LLM to match a repo name to a project."""
+    member, err = _resolve_member(request)
+    if err:
+        return err
+
+    repo_name = (request.data or {}).get("repo_name", "")
+    projects = (request.data or {}).get("projects", [])
+
+    if not repo_name or not projects:
+        return Response({"project": None})
+
+    matched = match_project_ai(repo_name, projects)
+    return Response({"project": matched})
 
 
 @api_view(["GET"])

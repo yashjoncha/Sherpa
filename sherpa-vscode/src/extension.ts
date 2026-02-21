@@ -3,7 +3,7 @@ import { TicketProvider, TicketItem } from "./ticketProvider";
 import { showTicketPanel } from "./ticketPanel";
 import { showCreateTicketPanel } from "./createTicketPanel";
 import { Ticket, Project } from "./tickets";
-import { updateTicket, fetchMembers, fetchProjects } from "./api";
+import { updateTicket, fetchMembers, fetchProjects, fetchAIProjectMatch } from "./api";
 import { detectWorkspace, matchProject } from "./workspace";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -38,7 +38,16 @@ export function activate(context: vscode.ExtensionContext) {
           myProvider.setProjectFilter(matched.name);
           allProvider.setProjectFilter(matched.name);
         } else {
-          log.appendLine(`No project matched for repo "${ws.repoName}"`);
+          // Tier 4: AI-powered matching
+          const projectNames = cachedProjects.map((p) => p.name);
+          const aiMatch = await fetchAIProjectMatch(ws.repoName, projectNames);
+          if (aiMatch) {
+            log.appendLine(`AI match → "${aiMatch}"`);
+            myProvider.setProjectFilter(aiMatch);
+            allProvider.setProjectFilter(aiMatch);
+          } else {
+            log.appendLine(`No project matched for repo "${ws.repoName}" (string + AI)`);
+          }
         }
       }
     } catch (err: any) {

@@ -102,3 +102,16 @@ export async function fetchProjects(): Promise<Project[]> {
   const data = await apiFetch("/vscode/projects/");
   return data.projects ?? [];
 }
+
+// ── AI Project Matching ──────────────────────────────────────────────────
+
+export async function fetchAIProjectMatch(
+  repoName: string,
+  projects: string[]
+): Promise<string | null> {
+  const data = await apiFetch("/vscode/match-project/", {
+    method: "POST",
+    body: { repo_name: repoName, projects },
+  });
+  return data.project ?? null;
+}
