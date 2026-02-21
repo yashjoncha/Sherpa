@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { Member, Project } from "./tickets";
-import { createTicket, fetchMembers, fetchProjects } from "./api";
+import { createTicket, fetchMembers, fetchProjects, fetchAIProjectMatch } from "./api";
 import { detectWorkspace, matchProject } from "./workspace";
 
 const PRIORITIES = ["critical", "high", "medium", "low"];
@@ -22,9 +22,31 @@ export async function showCreateTicketPanel(
     const ws = await detectWorkspace();
     if (ws.repoName) {
       matchedProject = matchProject(ws.repoName, projects);
+      if (!matchedProject && projects.length > 0) {
+        const aiMatch = await fetchAIProjectMatch(
+          ws.repoName,
+          projects.map((p) => p.name)
+        );
+        if (aiMatch) {
+          matchedProject = projects.find((p) => p.name === aiMatch);
+        }
+      }
     }
   } catch {
     // Workspace detection is best-effort
+  }
+
+  // Determine current GitHub user to pre-select as assignee
+  let currentGitHubUsername = "";
+  try {
+    const session = await vscode.authentication.getSession("github", ["user:email"], {
+      createIfNone: false,
+    });
+    if (session) {
+      currentGitHubUsername = session.account.label;
+    }
+  } catch {
+    // Best-effort
   }
 
   const panel = vscode.window.createWebviewPanel(
@@ -34,7 +56,7 @@ export async function showCreateTicketPanel(
     { enableScripts: true }
   );
 
-  panel.webview.html = getHtml(members, projects, matchedProject);
+  panel.webview.html = getHtml(members, projects, matchedProject, currentGitHubUsername);
 
   panel.webview.onDidReceiveMessage(async (msg) => {
     if (msg.type === "create") {
@@ -64,17 +86,22 @@ function escapeHtml(val: unknown): string {
 function getHtml(
   members: Member[],
   projects: Project[],
-  matchedProject?: Project
+  matchedProject?: Project,
+  currentGitHubUsername?: string
 ): string {
   const priorityOptions = PRIORITIES.map(
     (p) => `<option value="${p}">${p.charAt(0).toUpperCase() + p.slice(1)}</option>`
   ).join("");
 
   const memberOptions = members
-    .map(
-      (m) =>
-        `<option value="${m.slack_user_id}">${escapeHtml(m.display_name)} (${escapeHtml(m.github_username)})</option>`
-    )
+    .map((m) => {
+      const selected =
+        currentGitHubUsername &&
+        m.github_username.toLowerCase() === currentGitHubUsername.toLowerCase()
+          ? " selected"
+          : "";
+      return `<option value="${m.slack_user_id}"${selected}>${escapeHtml(m.display_name)} (${escapeHtml(m.github_username)})</option>`;
+    })
     .join("");
 
   const projectOptions = projects
