@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { TicketProvider, TicketItem } from "./ticketProvider";
+import { SprintProgressProvider } from "./sprintProgressProvider";
 import { showTicketPanel } from "./ticketPanel";
 import { showCreateTicketPanel } from "./createTicketPanel";
 import { Ticket, Project } from "./tickets";
@@ -8,11 +9,14 @@ import { detectWorkspace, matchProject } from "./workspace";
 
 export function activate(context: vscode.ExtensionContext) {
   const myProvider = new TicketProvider();
+  const sprintProgressProvider = new SprintProgressProvider();
 
   vscode.window.registerTreeDataProvider("sherpaMyTickets", myProvider);
+  vscode.window.registerTreeDataProvider("sherpaSprintProgress", sprintProgressProvider);
 
   function refreshAll() {
     myProvider.refresh();
+    sprintProgressProvider.refresh();
   }
 
   // Auto-detect workspace project on activation
@@ -65,6 +69,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Refresh
     vscode.commands.registerCommand("sherpa.refreshTickets", () => {
       myProvider.refresh();
+    }),
+    vscode.commands.registerCommand("sherpa.refreshSprintProgress", () => {
+      sprintProgressProvider.refresh();
     }),
     // Open ticket detail
     vscode.commands.registerCommand("sherpa.openTicket", (ticket: Ticket) => {

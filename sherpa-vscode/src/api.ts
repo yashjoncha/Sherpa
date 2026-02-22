@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { Ticket, Member, Sprint, Project, CreateTicketPayload } from "./tickets";
+import { Ticket, Member, Sprint, Project, CreateTicketPayload, SprintProgress } from "./tickets";
 
 async function getSession(): Promise<vscode.AuthenticationSession | undefined> {
   return vscode.authentication.getSession("github", ["user:email"], {
@@ -95,6 +95,12 @@ export async function fetchSprints(): Promise<Sprint[]> {
 export async function fetchProjects(): Promise<Project[]> {
   const data = await apiFetch("/vscode/projects/");
   return data.projects ?? [];
+}
+
+// ── Sprint Progress ─────────────────────────────────────────────────────
+
+export async function fetchSprintProgress(): Promise<SprintProgress> {
+  return apiFetch("/vscode/sprint-progress/");
 }
 
 // ── AI Project Matching ──────────────────────────────────────────────────
