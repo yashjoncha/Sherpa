@@ -6,12 +6,13 @@
   "engines": {
     "vscode": "^1.85.0"
   },
+  "icon": "media/sherpa-logo.png",
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "onView:sherpaMyTickets",
-    "onView:sherpaAllTickets"
+    "onView:sherpaSprintProgress",
+    "onView:sherpaMyTickets"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -27,12 +28,12 @@
     "views": {
       "sherpa-tickets": [
         {
-          "id": "sherpaMyTickets",
-          "name": "My Tickets"
+          "id": "sherpaSprintProgress",
+          "name": "Sprint Progress"
         },
         {
-          "id": "sherpaAllTickets",
-          "name": "All Tickets"
+          "id": "sherpaMyTickets",
+          "name": "My Tickets"
         }
       ]
     },
@@ -40,11 +41,6 @@
       {
         "command": "sherpa.refreshTickets",
         "title": "Sherpa: Refresh My Tickets",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "sherpa.refreshAllTickets",
-        "title": "Sherpa: Refresh All Tickets",
         "icon": "$(refresh)"
       },
       {
@@ -62,13 +58,23 @@
         "icon": "$(symbol-event)"
       },
       {
-        "command": "sherpa.assignTicket",
-        "title": "Sherpa: Assign Ticket",
-        "icon": "$(person-add)"
+        "command": "sherpa.filterByProject",
+        "title": "Sherpa: Filter by Project",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "sherpa.refreshSprintProgress",
+        "title": "Sherpa: Refresh Sprint Progress",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "sherpa.refreshSprintProgress",
+          "when": "view == sherpaSprintProgress",
+          "group": "navigation"
+        },
         {
           "command": "sherpa.refreshTickets",
           "when": "view == sherpaMyTickets",
@@ -80,13 +86,8 @@
           "group": "navigation"
         },
         {
-          "command": "sherpa.refreshAllTickets",
-          "when": "view == sherpaAllTickets",
-          "group": "navigation"
-        },
-        {
-          "command": "sherpa.createTicket",
-          "when": "view == sherpaAllTickets",
+          "command": "sherpa.filterByProject",
+          "when": "view == sherpaMyTickets",
           "group": "navigation"
         }
       ],
@@ -97,16 +98,7 @@
           "group": "inline"
         },
         {
-          "command": "sherpa.assignTicket",
-          "when": "viewItem == ticket",
-          "group": "inline"
-        },
-        {
           "command": "sherpa.updateTicketStatus",
-          "when": "viewItem == ticket"
-        },
-        {
-          "command": "sherpa.assignTicket",
           "when": "viewItem == ticket"
         }
       ]
@@ -131,6 +123,6 @@
     "@types/node": "^18.19.130",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.0.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.9.3"
   }
 }

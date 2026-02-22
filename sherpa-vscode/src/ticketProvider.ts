@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { Ticket } from "./tickets";
-import { fetchMyTickets, fetchAllTickets } from "./api";
+import { fetchMyTickets } from "./api";
 
 const statusIcons: Record<string, vscode.ThemeIcon> = {
   open: new vscode.ThemeIcon("circle-large-outline"),
@@ -25,7 +25,18 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
   >();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  constructor(private mode: "my" | "all") {}
+  private _projectFilter: string | undefined;
+
+  constructor() {}
+
+  setProjectFilter(project: string | undefined): void {
+    this._projectFilter = project;
+    this._onDidChangeTreeData.fire();
+  }
+
+  getProjectFilter(): string | undefined {
+    return this._projectFilter;
+  }
 
   refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -37,8 +48,7 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
 
   async getChildren(): Promise<TicketItem[]> {
     try {
-      const tickets =
-        this.mode === "my" ? await fetchMyTickets() : await fetchAllTickets();
+      const tickets = await fetchMyTickets(this._projectFilter);
       return tickets.map((t) => new TicketItem(t));
     } catch (err: any) {
       vscode.window.showErrorMessage(`Sherpa: ${err.message}`);

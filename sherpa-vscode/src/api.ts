@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { Ticket, Member, Sprint, CreateTicketPayload } from "./tickets";
+import { Ticket, Member, Sprint, Project, CreateTicketPayload, SprintProgress } from "./tickets";
 
 async function getSession(): Promise<vscode.AuthenticationSession | undefined> {
   return vscode.authentication.getSession("github", ["user:email"], {
@@ -35,6 +35,11 @@ async function apiFetch(
 
   const response = await fetch(url, init);
 
+
+
+
+
+  
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error || `HTTP ${response.status}`);
@@ -45,13 +50,9 @@ async function apiFetch(
 
 // ── Tickets ──────────────────────────────────────────────────────────────
 
-export async function fetchMyTickets(): Promise<Ticket[]> {
-  const data = await apiFetch("/vscode/my-tickets/");
-  return data.tickets ?? [];
-}
-
-export async function fetchAllTickets(): Promise<Ticket[]> {
-  const data = await apiFetch("/vscode/tickets/");
+export async function fetchMyTickets(project?: string): Promise<Ticket[]> {
+  const query = project ? `?project=${encodeURIComponent(project)}` : "";
+  const data = await apiFetch(`/vscode/my-tickets/${query}`);
   return data.tickets ?? [];
 }
 
@@ -89,4 +90,28 @@ export async function fetchMembers(): Promise<Member[]> {
 export async function fetchSprints(): Promise<Sprint[]> {
   const data = await apiFetch("/vscode/sprints/");
   return data.sprints ?? [];
+}
+
+export async function fetchProjects(): Promise<Project[]> {
+  const data = await apiFetch("/vscode/projects/");
+  return data.projects ?? [];
+}
+
+// ── Sprint Progress ─────────────────────────────────────────────────────
+
+export async function fetchSprintProgress(): Promise<SprintProgress> {
+  return apiFetch("/vscode/sprint-progress/");
+}
+
+// ── AI Project Matching ──────────────────────────────────────────────────
+
+export async function fetchAIProjectMatch(
+  repoName: string,
+  projects: string[]
+): Promise<string | null> {
+  const data = await apiFetch("/vscode/match-project/", {
+    method: "POST",
+    body: { repo_name: repoName, projects },
+  });
+  return data.project ?? null;
 }

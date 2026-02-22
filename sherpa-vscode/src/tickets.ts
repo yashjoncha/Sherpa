@@ -30,6 +30,29 @@ export interface Sprint {
   end_date?: string;
 }
 
+export interface Project {
+  id: number | string;
+  name: string;
+}
+
+export interface SprintProgress {
+  sprint: {
+    id: number | string;
+    name: string;
+    start_date: string | null;
+    end_date: string | null;
+  } | null;
+  progress: {
+    total: number;
+    done: number;
+    in_progress: number;
+    todo: number;
+    blocked: number;
+    other: number;
+    percentage: number;
+  } | null;
+}
+
 export interface CreateTicketPayload {
   title: string;
   description?: string;
