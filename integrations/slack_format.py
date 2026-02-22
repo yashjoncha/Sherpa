@@ -543,7 +543,7 @@ def format_eod_summary(target_date: str, tickets: list[dict], project_name: str 
         for t in group:
             tid = t.get("id", "?")
             title = t.get("title", "Untitled")
-            lines.append(f"`{tid}` {title}")
+            lines.append(f"<{settings.TRACKER_API_URL}/tasks/{tid}|`{tid}`> {title}")
         return "\n".join(lines)
 
     sections = [
@@ -571,7 +571,7 @@ def format_eod_summary(target_date: str, tickets: list[dict], project_name: str 
         warnings.append(f":no_entry_sign: *{len(blocked)}* ticket(s) blocked")
     critical = [t for t in tickets if t.get("priority") == "critical"]
     if critical:
-        crit_list = ", ".join(f"`{t.get('id', '?')}` {t.get('title', 'Untitled')}" for t in critical)
+        crit_list = ", ".join(f"<{settings.TRACKER_API_URL}/tasks/{t.get('id', '?')}|`{t.get('id', '?')}`> {t.get('title', 'Untitled')}" for t in critical)
         warnings.append(f":red_circle: *{len(critical)}* critical: {crit_list}")
     if warnings:
         blocks.append({
@@ -688,7 +688,7 @@ def format_sprint_retro(
             for t in done_tickets:
                 tid = t.get("id", "?")
                 title = t.get("title", "Untitled")
-                done_lines.append(f":white_check_mark: `{tid}` {title}")
+                done_lines.append(f":white_check_mark: <{settings.TRACKER_API_URL}/tasks/{tid}|`{tid}`> {title}")
             blocks.append({
                 "type": "context",
                 "elements": [
@@ -704,7 +704,7 @@ def format_sprint_retro(
                 status = t.get("status", "unknown")
                 s_emoji = STATUS_EMOJI.get(status, ":grey_question:")
                 label = status.replace("_", " ").title()
-                pending_lines.append(f"{s_emoji} `{tid}` {title} — _{label}_")
+                pending_lines.append(f"{s_emoji} <{settings.TRACKER_API_URL}/tasks/{tid}|`{tid}`> {title} — _{label}_")
             blocks.append({
                 "type": "context",
                 "elements": [
