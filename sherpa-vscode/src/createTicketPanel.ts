@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import { Member, Project } from "./tickets";
-import { createTicket, fetchMembers, fetchProjects, fetchAIProjectMatch } from "./api";
+import { Member, Project, Sprint } from "./tickets";
+import { createTicket, fetchMembers, fetchProjects, fetchSprints, fetchAIProjectMatch } from "./api";
 import { detectWorkspace, matchProject } from "./workspace";
 
 const PRIORITIES = ["critical", "high", "medium", "low"];
@@ -11,11 +11,21 @@ export async function showCreateTicketPanel(
 ) {
   let members: Member[] = [];
   let projects: Project[] = [];
+  let sprints: Sprint[] = [];
   try {
-    [members, projects] = await Promise.all([fetchMembers(), fetchProjects()]);
+    [members, projects, sprints] = await Promise.all([fetchMembers(), fetchProjects(), fetchSprints()]);
   } catch {
     // Non-critical — form still works without these lists
   }
+
+  // Pick the latest active sprint (by end_date descending)
+  const activeSprints = sprints.filter((s) => s.status === "active");
+  activeSprints.sort((a, b) => {
+    const da = a.end_date ?? "";
+    const db = b.end_date ?? "";
+    return db.localeCompare(da);
+  });
+  const latestActiveSprint = activeSprints[0];
 
   let matchedProject: Project | undefined;
   try {
@@ -56,7 +66,7 @@ export async function showCreateTicketPanel(
     { enableScripts: true }
   );
 
-  panel.webview.html = getHtml(members, projects, matchedProject, currentGitHubUsername);
+  panel.webview.html = getHtml(members, projects, sprints, matchedProject, latestActiveSprint, currentGitHubUsername);
 
   panel.webview.onDidReceiveMessage(async (msg) => {
     if (msg.type === "create") {
@@ -86,7 +96,9 @@ function escapeHtml(val: unknown): string {
 function getHtml(
   members: Member[],
   projects: Project[],
+  sprints: Sprint[],
   matchedProject?: Project,
+  latestActiveSprint?: Sprint,
   currentGitHubUsername?: string
 ): string {
   const priorityOptions = PRIORITIES.map(
@@ -101,6 +113,14 @@ function getHtml(
           ? " selected"
           : "";
       return `<option value="${m.slack_user_id}"${selected}>${escapeHtml(m.display_name)} (${escapeHtml(m.github_username)})</option>`;
+    })
+    .join("");
+
+  const sprintOptions = sprints
+    .map((s) => {
+      const selected = latestActiveSprint && String(s.id) === String(latestActiveSprint.id) ? " selected" : "";
+      const label = s.status === "active" ? `${s.name} (active)` : s.name;
+      return `<option value="${escapeHtml(String(s.id))}"${selected}>${escapeHtml(label)}</option>`;
     })
     .join("");
 
@@ -181,12 +201,21 @@ function getHtml(
         <input id="story_points" type="number" min="0" value="0" />
       </div>
     </div>
-    <div class="field">
-      <span class="field-label">Project</span>
-      <select id="project_id">
-        <option value="">— Select Project —</option>
-        ${projectOptions}
-      </select>
+    <div class="row">
+      <div class="field">
+        <span class="field-label">Project</span>
+        <select id="project_id">
+          <option value="">— Select Project —</option>
+          ${projectOptions}
+        </select>
+      </div>
+      <div class="field">
+        <span class="field-label">Sprint</span>
+        <select id="sprint">
+          <option value="">— No Sprint —</option>
+          ${sprintOptions}
+        </select>
+      </div>
     </div>
     <div class="field">
       <span class="field-label">Assign to</span>
@@ -214,6 +243,8 @@ function getHtml(
       if (sp) payload.story_points = sp;
       const projectId = document.getElementById("project_id").value;
       if (projectId) payload.project = projectId;
+      const sprint = document.getElementById("sprint").value;
+      if (sprint) payload.sprint = sprint;
       const assignee = document.getElementById("assignee").value;
       if (assignee) payload.assignee = assignee;
       vscode.postMessage({ type: "create", payload });

@@ -56,12 +56,6 @@ export async function fetchMyTickets(project?: string): Promise<Ticket[]> {
   return data.tickets ?? [];
 }
 
-export async function fetchAllTickets(project?: string): Promise<Ticket[]> {
-  const query = project ? `?project=${encodeURIComponent(project)}` : "";
-  const data = await apiFetch(`/vscode/tickets/${query}`);
-  return data.tickets ?? [];
-}
-
 export async function fetchTicketDetail(ticketId: string): Promise<Ticket> {
   const data = await apiFetch(`/vscode/tickets/${ticketId}/`);
   return data.ticket;

@@ -135,7 +135,7 @@ function getHtml(ticket: Ticket, members: Member[]): string {
       `<option value="${p}" ${p === ticket.priority ? "selected" : ""}>${priorityEmoji[p] ?? "⚪"} ${p.charAt(0).toUpperCase() + p.slice(1)}</option>`
   ).join("");
 
-  // Try to find which member matches current assignee
+  // Match current assignee to a member slack_user_id
   let currentAssigneeSlackId = "";
   const assignees = ticket.assignees ?? [];
   if (assignees.length > 0) {
@@ -400,7 +400,7 @@ function getHtml(ticket: Ticket, members: Member[]): string {
         <select id="priority">${priorityOptions}</select>
       </div>
       <div class="field">
-        <span class="field-label">Assignee</span>
+        <span class="field-label">Assign To</span>
         <select id="assignee">
           <option value="">Unassigned</option>
           ${memberOptions}

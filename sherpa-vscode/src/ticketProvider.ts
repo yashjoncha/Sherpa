@@ -27,7 +27,7 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
 
   private _projectFilter: string | undefined;
 
-  constructor(private mode: "my" | "all") {}
+  constructor() {}
 
   setProjectFilter(project: string | undefined): void {
     this._projectFilter = project;
@@ -48,10 +48,7 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
 
   async getChildren(): Promise<TicketItem[]> {
     try {
-      const tickets =
-        this.mode === "my"
-          ? await fetchMyTickets(this._projectFilter)
-          : await fetchMyTickets();
+      const tickets = await fetchMyTickets(this._projectFilter);
       return tickets.map((t) => new TicketItem(t));
     } catch (err: any) {
       vscode.window.showErrorMessage(`Sherpa: ${err.message}`);

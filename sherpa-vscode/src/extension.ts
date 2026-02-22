@@ -7,15 +7,12 @@ import { updateTicket, fetchProjects, fetchAIProjectMatch } from "./api";
 import { detectWorkspace, matchProject } from "./workspace";
 
 export function activate(context: vscode.ExtensionContext) {
-  const myProvider = new TicketProvider("my");
-  const allProvider = new TicketProvider("all");
+  const myProvider = new TicketProvider();
 
   vscode.window.registerTreeDataProvider("sherpaMyTickets", myProvider);
-  vscode.window.registerTreeDataProvider("sherpaAllTickets", allProvider);
 
   function refreshAll() {
     myProvider.refresh();
-    allProvider.refresh();
   }
 
   // Auto-detect workspace project on activation
@@ -68,9 +65,6 @@ export function activate(context: vscode.ExtensionContext) {
     // Refresh
     vscode.commands.registerCommand("sherpa.refreshTickets", () => {
       myProvider.refresh();
-    }),
-    vscode.commands.registerCommand("sherpa.refreshAllTickets", () => {
-      allProvider.refresh();
     }),
     // Open ticket detail
     vscode.commands.registerCommand("sherpa.openTicket", (ticket: Ticket) => {
