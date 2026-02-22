@@ -217,12 +217,18 @@ function getHtml(
         </select>
       </div>
     </div>
-    <div class="field">
-      <span class="field-label">Assign to</span>
-      <select id="assignee">
-        <option value="">— Unassigned —</option>
-        ${memberOptions}
-      </select>
+    <div class="row">
+      <div class="field">
+        <span class="field-label">Assign to</span>
+        <select id="assignee">
+          <option value="">— Unassigned —</option>
+          ${memberOptions}
+        </select>
+      </div>
+      <div class="field">
+        <span class="field-label">Deadline</span>
+        <input id="external_deadline" type="date" />
+      </div>
     </div>
     <button class="btn" onclick="submit()">Create</button>
   </div>
@@ -247,6 +253,8 @@ function getHtml(
       if (sprint) payload.sprint = sprint;
       const assignee = document.getElementById("assignee").value;
       if (assignee) payload.assignee = assignee;
+      const deadline = document.getElementById("external_deadline").value;
+      payload.external_deadline = deadline || "";
       vscode.postMessage({ type: "create", payload });
     }
   </script>

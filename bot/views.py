@@ -341,9 +341,17 @@ def vscode_create_ticket(request):
     if err:
         return err
 
-    data = request.data or {}
+    data = dict(request.data or {})
     if not data.get("title"):
         return Response({"error": "title is required"}, status=400)
+
+    # Map field names to what the tracker API expects
+    if "project" in data:
+        data["project_id"] = int(data.pop("project"))
+    if "sprint" in data:
+        data["sprint_id"] = int(data.pop("sprint"))
+    if "assignee" in data:
+        data["assignees"] = [data.pop("assignee")]
 
     # Attach the member's slack_user_id so tracker can assign ownership
     if member.slack_user_id:

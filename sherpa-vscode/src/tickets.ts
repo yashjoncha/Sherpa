@@ -61,4 +61,5 @@ export interface CreateTicketPayload {
   assignee?: string;
   sprint?: string;
   project?: string;
+  external_deadline?: string;
 }

@@ -146,7 +146,9 @@ function getHtml(ticket: Ticket, members: Member[]): string {
       (m) =>
         m.slack_user_id === name ||
         m.display_name.toLowerCase() === nameLower ||
-        m.github_username.toLowerCase() === nameLower
+        m.github_username.toLowerCase() === nameLower ||
+        m.display_name.toLowerCase().startsWith(nameLower) ||
+        m.github_username.toLowerCase().startsWith(nameLower)
     );
     if (match) currentAssigneeSlackId = match.slack_user_id;
   }
