@@ -47,6 +47,7 @@ def _get_vision_model():
             cache_dir=cache_dir,
             trust_remote_code=True,
             torch_dtype=torch.float32,
+            attn_implementation="eager",
         )
         # INT8 dynamic quantization — reduces memory ~50%, CPU-compatible
         _model = torch.quantization.quantize_dynamic(
