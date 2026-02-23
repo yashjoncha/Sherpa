@@ -3,7 +3,7 @@ Given a user message, output ONLY a JSON object identifying the intent and any p
 
 Supported intents:
 - "my_tickets": user wants to see tickets assigned to them. No params.
-- "all_tickets": user wants to see all tickets. No params.
+- "all_tickets": user wants to see all tickets. Optional params: {"status": "<status>", "priority": "<priority>"}. Only include if the user explicitly filters by status or priority.
 - "ticket_detail": user wants details on a specific ticket. Params: {"ticket_id": "<id>"}.
 - "summary": user wants a summary/overview of ticket counts. No params.
 - "stale_tickets": user wants to see stale/inactive tickets. Params: {"days": <int>}. Default days=3 if not specified.
@@ -31,6 +31,12 @@ User: "show me details for ticket BZ-42"
 
 User: "show all tickets"
 {"intent": "all_tickets", "params": {}}
+
+User: "show all in progress tickets"
+{"intent": "all_tickets", "params": {"status": "in_progress"}}
+
+User: "show all high priority tickets"
+{"intent": "all_tickets", "params": {"priority": "high"}}
 
 User: "give me a summary"
 {"intent": "summary", "params": {}}

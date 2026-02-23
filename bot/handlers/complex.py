@@ -17,7 +17,6 @@ from integrations.slack_format import (
     format_summary,
     format_ticket_created,
     format_assignment_recommendation,
-    format_sprint_health,
 )
 from integrations.tracker import (
     create_ticket,
@@ -26,8 +25,6 @@ from integrations.tracker import (
     get_sprint_tickets,
     get_ticket_summary,
     get_tickets_by_date,
-    get_all_tickets,
-    get_stale_tickets,
     update_ticket,
 )
 
@@ -245,31 +242,105 @@ def handle_summary(message: str, user_id: str, params: dict, say) -> None:
 
 
 def handle_sprint_health(message: str, user_id: str, params: dict, say) -> None:
-    """Analyze sprint health using ticket data + stale tickets."""
-    summary_data = get_ticket_summary()
-    stale_data = get_stale_tickets(days=3)
-    all_tickets = get_all_tickets()
+    """Show progress for all active sprints with risk assessment."""
+    sprints = get_sprints()
+    active_sprints = [s for s in sprints if s.get("status") == "active"]
 
-    sprint_info = {
-        "summary": summary_data,
-        "stale_tickets_count": len(stale_data),
-        "total_tickets": len(all_tickets),
-        "stale_tickets": [
-            {"title": t.get("title"), "status": t.get("status"), "priority": t.get("priority")}
-            for t in stale_data[:10]
-        ],
-    }
-
-    prompt = load_prompt("sprint_health").replace("{sprint_data}", json.dumps(sprint_info, indent=2))
-
-    try:
-        analysis = run_completion(prompt, message, max_tokens=400, temperature=0.3)
-    except Exception:
-        logger.exception("LLM failed for sprint_health")
-        say(blocks=format_error_message("I couldn't analyze the sprint health. Please try again."))
+    if not active_sprints:
+        say(blocks=format_error_message("No active sprints right now."))
         return
 
-    say(blocks=format_sprint_health(analysis, sprint_info))
+    done_statuses = {"done", "completed", "closed"}
+    in_progress_statuses = {"in_progress", "in_review"}
+    todo_statuses = {"todo", "open", "planning"}
+    blocked_statuses = {"blocked"}
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": ":heartpulse: Sprint Health", "emoji": True},
+        },
+    ]
+
+    for sprint in active_sprints:
+        tickets = get_sprint_tickets(sprint["id"])
+        total = len(tickets)
+
+        done = in_prog = todo = blocked = 0
+        for t in tickets:
+            st = (t.get("status") or "").lower()
+            if st in done_statuses:
+                done += 1
+            elif st in in_progress_statuses:
+                in_prog += 1
+            elif st in todo_statuses:
+                todo += 1
+            elif st in blocked_statuses:
+                blocked += 1
+
+        percentage = round(done / total * 100) if total else 0
+
+        # Text progress bar
+        bar_len = 10
+        filled = round(bar_len * percentage / 100)
+        bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
+
+        # Risk assessment
+        risks: list[str] = []
+        if blocked > 0:
+            risks.append(f"{blocked} blocked ticket{'s' if blocked != 1 else ''}")
+
+        end_str = sprint.get("end_date")
+        start_str = sprint.get("start_date")
+        if end_str and start_str:
+            try:
+                start_dt = date.fromisoformat(start_str[:10])
+                end_dt = date.fromisoformat(end_str[:10])
+                total_days = (end_dt - start_dt).days or 1
+                elapsed = (date.today() - start_dt).days
+                time_pct = min(round(elapsed / total_days * 100), 100)
+                if time_pct > percentage + 20:
+                    risks.append(
+                        f"completion ({percentage}%) behind timeline ({time_pct}%)"
+                    )
+            except ValueError:
+                pass
+
+        if total and todo > done + in_prog:
+            risks.append("majority of tickets still in to-do")
+
+        risk_label = ":red_circle: At Risk" if risks else ":large_green_circle: On Track"
+
+        name = sprint.get("name") or f"Sprint {sprint['id']}"
+        date_range = ""
+        if start_str and end_str:
+            date_range = f"\n:calendar: {start_str[:10]} \u2192 {end_str[:10]}"
+
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*{name}*  {risk_label}{date_range}\n\n"
+                    f"`{bar}` *{percentage}%* complete  ({done}/{total})\n\n"
+                    f":white_check_mark: Done: *{done}*  |  "
+                    f":hourglass_flowing_sand: In Progress: *{in_prog}*  |  "
+                    f":clipboard: To Do: *{todo}*  |  "
+                    f":no_entry_sign: Blocked: *{blocked}*"
+                ),
+            },
+        })
+
+        if risks:
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": ":warning: " + ", ".join(risks).capitalize()},
+                ],
+            })
+
+    say(blocks=blocks)
 
 
 def handle_eod_summary(message: str, user_id: str, params: dict, say) -> None:
