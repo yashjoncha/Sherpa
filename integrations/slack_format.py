@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+from bs4 import BeautifulSoup
 from django.conf import settings
+
+
+def _strip_html(text: str) -> str:
+    """Convert HTML to plain text, turning block-level tags into newlines."""
+    soup = BeautifulSoup(text, "html.parser")
+    for tag in soup.find_all(["p", "div", "br", "li"]):
+        tag.insert_before("\n")
+    return soup.get_text().strip()
 
 STATUS_EMOJI = {
     "open": ":large_blue_circle:",
@@ -228,7 +237,7 @@ def format_ticket_detail(ticket: dict) -> list[dict]:
         blocks.append({"type": "divider"})
         blocks.append({
             "type": "section",
-            "text": {"type": "mrkdwn", "text": ticket["description"]},
+            "text": {"type": "mrkdwn", "text": _strip_html(ticket["description"])},
         })
 
     updates = ticket.get("updates", [])
