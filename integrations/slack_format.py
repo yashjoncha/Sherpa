@@ -209,7 +209,9 @@ def format_ticket_detail(ticket: dict) -> list[dict]:
         proj_name = (proj.get("title") or proj.get("name") or str(proj)) if isinstance(proj, dict) else str(proj)
         fields.append({"type": "mrkdwn", "text": f"*Project:* {proj_name}"})
     if ticket.get("sprint"):
-        fields.append({"type": "mrkdwn", "text": f"*Sprint:* {ticket['sprint']}"})
+        sprint = ticket["sprint"]
+        sprint_name = sprint.get("name", str(sprint)) if isinstance(sprint, dict) else str(sprint)
+        fields.append({"type": "mrkdwn", "text": f"*Sprint:* {sprint_name}"})
     if ticket.get("assignees"):
         assignee_list = ticket["assignees"]
         if isinstance(assignee_list, list):
@@ -240,7 +242,7 @@ def format_ticket_detail(ticket: dict) -> list[dict]:
             "text": {"type": "mrkdwn", "text": _strip_html(ticket["description"])},
         })
 
-    updates = ticket.get("updates", [])
+    updates = [u for u in ticket.get("updates", []) if u.get("message", "").strip()]
     if updates:
         blocks.append({"type": "divider"})
         blocks.append({
