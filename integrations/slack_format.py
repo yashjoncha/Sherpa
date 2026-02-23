@@ -902,6 +902,83 @@ def format_risk_escalation_dm(
     return blocks
 
 
+def format_image_analysis(analysis: dict) -> list[dict]:
+    """Format image analysis results as Block Kit blocks.
+
+    Args:
+        analysis: Dict with ``summary``, ``extracted_info``,
+            ``suggested_action``, and ``ticket_fields`` from the LLM.
+
+    Returns:
+        A list of Block Kit block dicts.
+    """
+    summary = analysis.get("summary", "No summary available.")
+    extracted_info = analysis.get("extracted_info", [])
+    suggested_action = analysis.get("suggested_action", "none")
+    ticket_fields = analysis.get("ticket_fields", {})
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ":camera: Screenshot Analysis",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Summary:* {summary}"},
+        },
+    ]
+
+    if extracted_info:
+        info_lines = "\n".join(f"- {item}" for item in extracted_info)
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Extracted Info:*\n{info_lines}"},
+        })
+
+    if suggested_action and suggested_action != "none":
+        action_label = suggested_action.replace("_", " ").title()
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":bulb: *Suggested Action:* {action_label}",
+            },
+        })
+
+        if ticket_fields:
+            fields = []
+            if ticket_fields.get("title"):
+                fields.append({"type": "mrkdwn", "text": f"*Title:* {ticket_fields['title']}"})
+            if ticket_fields.get("priority"):
+                p = ticket_fields["priority"]
+                p_emoji = PRIORITY_EMOJI.get(p, ":grey_question:")
+                fields.append({"type": "mrkdwn", "text": f"*Priority:* {p_emoji} {p.title()}"})
+            if fields:
+                blocks.append({"type": "section", "fields": fields})
+            if ticket_fields.get("description"):
+                blocks.append({
+                    "type": "context",
+                    "elements": [
+                        {"type": "mrkdwn", "text": f"_{ticket_fields['description']}_"},
+                    ],
+                })
+
+    blocks.append({"type": "divider"})
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {"type": "mrkdwn", "text": ":robot_face: Sherpa Vision AI"},
+        ],
+    })
+
+    return blocks
+
+
 def format_link_result(mapping: dict, created: bool) -> list[dict]:
     """Format the result of linking a Slack user to a tracker account.
 

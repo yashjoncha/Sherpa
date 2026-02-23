@@ -32,6 +32,9 @@ media/
 # AI / Model files
 *.gguf
 faiss_index/
+models/florence2/
+*.bin
+*.safetensors
 
 # OS
 .DS_Store

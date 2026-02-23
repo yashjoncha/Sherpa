@@ -8,6 +8,7 @@ from django.conf import settings
 from slack_bolt import App
 
 from bot.assignee import build_candidate_profiles, build_suggestion_prompt, suggest_assignee
+from bot.handlers.image import handle_image_analysis
 from bot.router import route
 from integrations.slack_format import (
     format_assignee_suggestion,
@@ -486,6 +487,54 @@ def handle_suggest_assignee(ack, respond, command):
 
 
 # ---------------------------------------------------------------------------
+# Image download helpers
+# ---------------------------------------------------------------------------
+
+_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+def _download_slack_file(file_info: dict) -> bytes | None:
+    """Download a file from Slack using the bot token.
+
+    Args:
+        file_info: A file dict from a Slack event's ``files`` array.
+
+    Returns:
+        Raw file bytes, or ``None`` if the download fails.
+    """
+    url = file_info.get("url_private_download") or file_info.get("url_private")
+    if not url:
+        return None
+    try:
+        resp = httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {settings.SLACK_BOT_TOKEN}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.content
+    except httpx.HTTPError:
+        logger.exception("Failed to download Slack file: %s", url)
+        return None
+
+
+def _get_image_from_event(event: dict) -> tuple[bytes | None, dict | None]:
+    """Check if a Slack event contains an image file and download it.
+
+    Returns:
+        Tuple of (image_bytes, file_info) or (None, None) if no image found.
+    """
+    files = event.get("files", [])
+    for f in files:
+        mimetype = f.get("mimetype", "")
+        if mimetype in _IMAGE_MIME_TYPES:
+            image_bytes = _download_slack_file(f)
+            if image_bytes:
+                return image_bytes, f
+    return None, None
+
+
+# ---------------------------------------------------------------------------
 # Natural-language message / mention handlers
 # ---------------------------------------------------------------------------
 
@@ -515,11 +564,18 @@ def handle_dm(event, say):
                 logger.exception("Auto-suggest failed for %s", ticket_id)
         return
 
-    # Ignore other non-standard message subtypes
-    if subtype:
+    # Allow file_share subtype through for image analysis
+    if subtype and subtype != "file_share":
         return
 
     user_id = event.get("user", "")
+
+    # Check for image attachments
+    image_bytes, _file_info = _get_image_from_event(event)
+    if image_bytes:
+        handle_image_analysis(image_bytes, text, user_id, say)
+        return
+
     _handle_natural_message(text, user_id, say)
 
 
@@ -528,6 +584,13 @@ def handle_mention(event, say):
     """Handle @mentions of the bot in channels."""
     text = event.get("text", "")
     user_id = event.get("user", "")
+
+    # Check for image attachments
+    image_bytes, _file_info = _get_image_from_event(event)
+    if image_bytes:
+        handle_image_analysis(image_bytes, text, user_id, say)
+        return
+
     _handle_natural_message(text, user_id, say)
 
 
