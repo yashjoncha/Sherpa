@@ -278,8 +278,32 @@ def vscode_my_tickets(request):
     try:
         tickets = get_tickets_for_user(member.slack_user_id, status=status, priority=priority)
     except TrackerAPIError as e:
-        logger.error("Tracker API error: %s", e)
-        return Response({"error": "Failed to fetch tickets from tracker"}, status=502)
+        can_relink = (
+            e.status_code == 404
+            and member.slack_user_id
+            and member.email
+            and "Slack user not found" in (e.detail or "")
+        )
+        if can_relink:
+            logger.info(
+                "Tracker mapping missing for %s (%s); attempting re-link",
+                member.slack_user_id,
+                member.email,
+            )
+            try:
+                link_user(member.slack_user_id, member.email)
+                tickets = get_tickets_for_user(
+                    member.slack_user_id, status=status, priority=priority
+                )
+            except TrackerAPIError as retry_err:
+                logger.error("Tracker API error after auto re-link: %s", retry_err)
+                return Response({"error": "Failed to fetch tickets from tracker"}, status=502)
+            except Exception:
+                logger.exception("Unexpected error during tracker auto re-link")
+                return Response({"error": "Failed to fetch tickets from tracker"}, status=502)
+        else:
+            logger.error("Tracker API error: %s", e)
+            return Response({"error": "Failed to fetch tickets from tracker"}, status=502)
 
     if project:
         tickets = [t for t in tickets if _ticket_matches_project(t, project)]
