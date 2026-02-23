@@ -407,6 +407,16 @@ def format_ticket_created(ticket: dict) -> list[dict]:
             ],
         })
 
+    if ticket.get("sprint"):
+        sprint = ticket["sprint"]
+        sprint_name = sprint.get("name", str(sprint)) if isinstance(sprint, dict) else str(sprint)
+        blocks.append({
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Sprint:* :runner: {sprint_name}"},
+            ],
+        })
+
     assignees = ticket.get("assignees", [])
     if assignees:
         if isinstance(assignees, list):

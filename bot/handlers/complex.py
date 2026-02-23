@@ -143,6 +143,15 @@ def handle_create_ticket(message: str, user_id: str, params: dict, say) -> None:
         else:
             logger.warning("Could not resolve project name: %s", project_name)
 
+    # Auto-assign active sprint
+    try:
+        sprints = get_sprints()
+        active = next((s for s in sprints if s.get("status") == "active"), None)
+        if active:
+            ticket_data["sprint_id"] = active["id"]
+    except Exception:
+        logger.warning("Could not fetch sprints; skipping auto-assign")
+
     logger.info("Creating ticket with data: %s", ticket_data)
     ticket = create_ticket(ticket_data)
     say(blocks=format_ticket_created(ticket))
