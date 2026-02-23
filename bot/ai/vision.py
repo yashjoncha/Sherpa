@@ -94,7 +94,8 @@ def analyze_image(image_bytes: bytes, task: str = "<DETAILED_CAPTION>") -> str:
             input_ids=inputs["input_ids"],
             pixel_values=inputs["pixel_values"],
             max_new_tokens=1024,
-            num_beams=3,
+            num_beams=1,
+            use_cache=False,
         )
     result = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
     parsed = processor.post_process_generation(result, task=task, image_size=image.size)
