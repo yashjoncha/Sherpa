@@ -34,24 +34,27 @@ PRIORITY_EMOJI = {
 }
 
 
-def format_ticket_summary(title: str, status: str, priority: str) -> dict:
+def format_ticket_summary(title: str, status: str, priority: str, ticket_id: str = "") -> dict:
     """Format a single ticket as a Block Kit section.
 
     Args:
         title: The ticket title.
         status: Current ticket status.
         priority: Ticket priority level.
+        ticket_id: Optional ticket ID to render as a clickable link.
 
     Returns:
         A Block Kit section block dict.
     """
     s_emoji = STATUS_EMOJI.get(status, ":grey_question:")
     p_emoji = PRIORITY_EMOJI.get(priority, ":grey_question:")
+    ticket_url = f"{settings.TRACKER_API_URL}/tasks/{ticket_id}/"
+    id_part = f"<{ticket_url}|`{ticket_id}`> " if ticket_id else ""
     return {
         "type": "section",
         "text": {
             "type": "mrkdwn",
-            "text": f"*{title}*\n{s_emoji} {status.replace('_', ' ').title()}  {p_emoji} {priority.title()}",
+            "text": f"*{id_part}{title}*\n{s_emoji} {status.replace('_', ' ').title()}  {p_emoji} {priority.title()}",
         },
     }
 
@@ -91,6 +94,7 @@ def format_tickets_response(
                 title=ticket.get("title", "Untitled"),
                 status=ticket.get("status", "unknown"),
                 priority=ticket.get("priority", "unknown"),
+                ticket_id=ticket.get("id", ""),
             )
         )
     if total > max_shown:
@@ -337,6 +341,7 @@ def format_stale_tickets(tickets: list[dict], days: int, max_shown: int = 20) ->
                 title=ticket.get("title", "Untitled"),
                 status=ticket.get("status", "unknown"),
                 priority=ticket.get("priority", "unknown"),
+                ticket_id=ticket.get("id", ""),
             )
         )
 
