@@ -304,24 +304,32 @@ def format_summary(summary: dict) -> list[dict]:
     ]
 
 
-def format_stale_tickets(tickets: list[dict], days: int, max_shown: int = 20) -> list[dict]:
+def format_stale_tickets(
+    tickets: list[dict],
+    days: int,
+    max_shown: int = 20,
+    header: str | None = None,
+) -> list[dict]:
     """Format stale tickets as Block Kit blocks.
 
     Args:
         tickets: List of stale ticket dicts.
         days: The staleness threshold in days.
         max_shown: Maximum number of tickets to display.
+        header: Optional custom header text. Ticket count is appended
+            automatically. Defaults to the standard staleness header.
 
     Returns:
         A list of Block Kit block dicts.
     """
     total = len(tickets)
+    header_text = header or f":cobweb: Stale Tickets — no updates in {days}+ days"
     blocks: list[dict] = [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f":cobweb: Stale Tickets — no updates in {days}+ days ({total})",
+                "text": f"{header_text} ({total})",
                 "emoji": True,
             },
         },

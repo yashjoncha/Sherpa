@@ -8,6 +8,7 @@ import httpx
 from django.conf import settings
 
 logger = logging.getLogger("integrations.tracker")
+_REQUEST_TIMEOUT_SECONDS = 10
 
 
 class TrackerAPIError(Exception):
@@ -17,6 +18,24 @@ class TrackerAPIError(Exception):
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"Tracker API error {status_code}: {detail}")
+
+
+def _request(method: str, url: str, **kwargs) -> httpx.Response:
+    """Issue a tracker request with sane defaults and consistent transport errors."""
+    try:
+        return httpx.request(
+            method,
+            url,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+            follow_redirects=True,
+            **kwargs,
+        )
+    except httpx.TimeoutException as exc:
+        logger.error("Tracker request timed out: %s %s", method, url)
+        raise TrackerAPIError(504, "Tracker request timed out") from exc
+    except httpx.HTTPError as exc:
+        logger.error("Tracker request failed: %s %s (%s)", method, url, exc)
+        raise TrackerAPIError(502, "Could not reach tracker service") from exc
 
 
 def get_projects() -> list[dict]:
@@ -32,7 +51,7 @@ def get_projects() -> list[dict]:
     url = f"{settings.TRACKER_API_URL}/api/projects/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
 
-    response = httpx.get(url, headers=headers, timeout=10)
+    response = _request("GET", url, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -69,13 +88,18 @@ def get_tickets_for_user(
     url = f"{settings.TRACKER_API_URL}/api/my-tickets/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
 
-    response = httpx.get(url, params=params, headers=headers, timeout=10)
+    logger.info("get_tickets_for_user: GET %s params=%s", url, params)
+    response = _request("GET", url, params=params, headers=headers)
+    logger.info("get_tickets_for_user: status=%s url=%s", response.status_code, response.url)
 
     if response.status_code != 200:
+        logger.error("get_tickets_for_user: FAILED status=%s body=%s", response.status_code, response.text[:500])
         raise TrackerAPIError(response.status_code, response.text)
 
     data = response.json()
-    return data.get("tickets", data)
+    tickets = data.get("tickets", data)
+    logger.info("get_tickets_for_user: returned %d tickets", len(tickets) if isinstance(tickets, list) else 0)
+    return tickets
 
 
 def link_user(slack_user_id: str, email: str) -> tuple[dict, bool]:
@@ -98,7 +122,7 @@ def link_user(slack_user_id: str, email: str) -> tuple[dict, bool]:
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
     payload = {"slack_user_id": slack_user_id, "email": email}
 
-    response = httpx.post(url, json=payload, headers=headers, timeout=10)
+    response = _request("POST", url, json=payload, headers=headers)
 
     if response.status_code not in (200, 201):
         raise TrackerAPIError(response.status_code, response.text)
@@ -124,7 +148,7 @@ def create_ticket(ticket_data: dict) -> dict:
     url = f"{settings.TRACKER_API_URL}/api/tickets/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
 
-    response = httpx.post(url, json=ticket_data, headers=headers, timeout=10)
+    response = _request("POST", url, json=ticket_data, headers=headers)
 
     if response.status_code not in (200, 201):
         raise TrackerAPIError(response.status_code, response.text)
@@ -159,7 +183,7 @@ def get_all_tickets(
     url = f"{settings.TRACKER_API_URL}/api/tickets/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
 
-    response = httpx.get(url, params=params, headers=headers, timeout=10)
+    response = _request("GET", url, params=params, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -184,7 +208,7 @@ def get_ticket_detail(ticket_id: str) -> dict:
     url = f"{settings.TRACKER_API_URL}/api/tickets/{ticket_id}/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
 
-    response = httpx.get(url, headers=headers, timeout=10)
+    response = _request("GET", url, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -210,7 +234,7 @@ def get_stale_tickets(days: int = 3) -> list[dict]:
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
     params = {"days": str(days)}
 
-    response = httpx.get(url, params=params, headers=headers, timeout=10)
+    response = _request("GET", url, params=params, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -238,7 +262,7 @@ def get_ticket_summary(slack_user_id: str | None = None) -> dict:
     if slack_user_id:
         params["slack_user_id"] = slack_user_id
 
-    response = httpx.get(url, params=params, headers=headers, timeout=10)
+    response = _request("GET", url, params=params, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -263,7 +287,7 @@ def get_tickets_by_date(target_date: str) -> list[dict]:
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
     params: dict[str, str] = {"date": target_date}
 
-    response = httpx.get(url, params=params, headers=headers, timeout=10)
+    response = _request("GET", url, params=params, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -295,7 +319,7 @@ def get_sprints() -> list[dict]:
     url = f"{settings.TRACKER_API_URL}/api/sprints/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
 
-    response = httpx.get(url, headers=headers, timeout=10)
+    response = _request("GET", url, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -321,7 +345,7 @@ def get_sprint_tickets(sprint_id: int | str) -> list[dict]:
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
     params = {"sprint": str(sprint_id)}
 
-    response = httpx.get(url, params=params, headers=headers, timeout=10)
+    response = _request("GET", url, params=params, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -356,7 +380,7 @@ def update_ticket(
     if slack_user_id:
         payload["slack_user_id"] = slack_user_id
 
-    response = httpx.put(url, json=payload, headers=headers, timeout=10)
+    response = _request("PUT", url, json=payload, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)
@@ -377,7 +401,7 @@ def get_slack_mappings() -> dict[str, str]:
     url = f"{settings.TRACKER_API_URL}/api/slack-mappings/"
     headers = {"Authorization": f"Bearer {settings.TRACKER_API_TOKEN}"}
 
-    response = httpx.get(url, headers=headers, timeout=10)
+    response = _request("GET", url, headers=headers)
 
     if response.status_code != 200:
         raise TrackerAPIError(response.status_code, response.text)

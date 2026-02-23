@@ -43,6 +43,7 @@ def route(message: str, user_id: str, say) -> None:
     result = classify_intent(message)
     intent = result["intent"]
     params = result["params"]
+    logger.info("Classified intent=%s params=%s for user=%s", intent, params, user_id)
 
     if intent in PM_ONLY_INTENTS and not _is_pm(user_id):
         say(text=f"{_ACCESS_DENIED_MSG}\n\n{help_text_for(user_id)}")
@@ -56,11 +57,22 @@ def route(message: str, user_id: str, say) -> None:
     try:
         handler(message, user_id, params, say)
     except TrackerAPIError as exc:
-        logger.error("Tracker API error (intent=%s): %s", intent, exc)
+        logger.error("Tracker API error (intent=%s, user=%s, params=%s): status=%s detail=%s",
+                     intent, user_id, params, exc.status_code, exc.detail)
         if exc.status_code == 404:
-            say(blocks=format_error_message(
-                "I couldn't find what you're looking for. Please double-check the ticket ID."
-            ))
+            if intent == "my_tickets":
+                say(blocks=format_error_message(
+                    "I couldn't find your tracker account. "
+                    "Make sure your Slack account is linked to the tracker."
+                ))
+            elif intent == "ticket_detail":
+                say(blocks=format_error_message(
+                    "I couldn't find that ticket. Please double-check the ticket ID."
+                ))
+            else:
+                say(blocks=format_error_message(
+                    "I couldn't find what you're looking for."
+                ))
         else:
             say(blocks=format_error_message(
                 f"The tracker returned an error: {exc.detail}"

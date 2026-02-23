@@ -17,6 +17,7 @@ from integrations.slack_format import (
 )
 from integrations.tracker import (
     get_all_tickets,
+    get_sprints,
     get_stale_tickets,
     get_ticket_detail,
     get_ticket_summary,
@@ -92,9 +93,115 @@ def help_text_for(user_id: str) -> str:
     return PM_HELP_TEXT if _is_pm(user_id) else DEV_HELP_TEXT
 
 
+def _get_project_name(ticket: dict) -> str | None:
+    """Extract the display name from a ticket's project field."""
+    proj = ticket.get("project")
+    if isinstance(proj, dict):
+        return proj.get("title") or proj.get("name") or None
+    if isinstance(proj, str) and proj:
+        return proj
+    return None
+
+
+def _filter_by_project(tickets: list[dict], project_filter: str) -> list[dict]:
+    """Filter tickets by project name (case-insensitive: exact → startswith → contains)."""
+    name_lower = project_filter.lower()
+    exact, starts, contains = [], [], []
+    for t in tickets:
+        proj_name = _get_project_name(t)
+        if proj_name is None:
+            continue
+        p_lower = proj_name.lower()
+        if name_lower == p_lower:
+            exact.append(t)
+        elif p_lower.startswith(name_lower):
+            starts.append(t)
+        elif name_lower in p_lower:
+            contains.append(t)
+    return exact or starts or contains
+
+
+def _get_active_sprint_names() -> set[str]:
+    """Return the set of active sprint names (lowercased)."""
+    try:
+        sprints = get_sprints()
+    except Exception:
+        logger.warning("Could not fetch sprints for current-sprint filter")
+        return set()
+    return {
+        s.get("name", "").lower()
+        for s in sprints
+        if s.get("status") == "active" and s.get("name")
+    }
+
+
+def _filter_by_sprint(tickets: list[dict], sprint_filter: str) -> list[dict]:
+    """Keep only tickets matching the sprint filter.
+
+    If *sprint_filter* is ``"current"``, matches tickets in any active sprint.
+    Otherwise matches by sprint name (case-insensitive: exact → startswith → contains).
+    """
+    if sprint_filter == "current":
+        active_names = _get_active_sprint_names()
+        if not active_names:
+            return []
+        return [
+            t for t in tickets
+            if isinstance(t.get("sprint"), dict)
+            and (t["sprint"].get("name") or "").lower() in active_names
+        ]
+
+    # Match by sprint name
+    name_lower = sprint_filter.lower()
+    exact, starts, contains = [], [], []
+    for t in tickets:
+        sprint = t.get("sprint")
+        if not isinstance(sprint, dict):
+            continue
+        s_name = (sprint.get("name") or "").lower()
+        if not s_name:
+            continue
+        if name_lower == s_name:
+            exact.append(t)
+        elif s_name.startswith(name_lower):
+            starts.append(t)
+        elif name_lower in s_name:
+            contains.append(t)
+    return exact or starts or contains
+
+
 def handle_my_tickets(message: str, user_id: str, params: dict, say) -> None:
+    logger.info("handle_my_tickets called: user_id=%s, params=%s", user_id, params)
     tickets = get_tickets_for_user(user_id)
-    if not tickets:
+    logger.info("get_tickets_for_user returned %d tickets", len(tickets) if tickets else 0)
+    project_filter = params.get("project")
+    sprint_filter = params.get("sprint")
+
+    # Apply filters
+    if project_filter:
+        tickets = _filter_by_project(tickets or [], project_filter)
+    if sprint_filter:
+        tickets = _filter_by_sprint(tickets or [], sprint_filter)
+
+    # Build header and respond
+    if project_filter or sprint_filter:
+        if not tickets:
+            parts = []
+            if project_filter:
+                parts.append(f"project *{project_filter}*")
+            if sprint_filter:
+                sprint_label = "the *current sprint*" if sprint_filter == "current" else f"sprint *{sprint_filter}*"
+                parts.append(sprint_label)
+            say(text=f":ticket: No tickets found for you in {' in '.join(parts)}.")
+            return
+        header_parts = []
+        if project_filter:
+            header_parts.append(project_filter.title())
+        if sprint_filter:
+            header_parts.append("Current Sprint" if sprint_filter == "current" else f"Sprint {sprint_filter.title()}")
+        header = f":ticket: Your Tickets — {' · '.join(header_parts)}"
+        say(blocks=format_tickets_response(tickets, header=header))
+    elif not tickets:
         say(blocks=format_no_tickets())
     else:
         say(blocks=format_tickets_response(tickets))
@@ -169,7 +276,17 @@ def handle_stale_tickets(message: str, user_id: str, params: dict, say) -> None:
     except (TypeError, ValueError):
         days = 3
     tickets = get_stale_tickets(days)
-    say(blocks=format_stale_tickets(tickets, days))
+    project_filter = params.get("project")
+
+    if project_filter:
+        tickets = _filter_by_project(tickets or [], project_filter)
+        if not tickets:
+            say(text=f":cobweb: No stale tickets found in project *{project_filter}*.")
+            return
+        header = f":cobweb: Stale Tickets in {project_filter.title()} — no updates in {days}+ days"
+        say(blocks=format_stale_tickets(tickets, days, header=header))
+    else:
+        say(blocks=format_stale_tickets(tickets, days))
 
 
 def handle_greeting(message: str, user_id: str, params: dict, say) -> None:
