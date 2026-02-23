@@ -184,13 +184,14 @@ def format_ticket_detail(ticket: dict) -> list[dict]:
     s_emoji = STATUS_EMOJI.get(status, ":grey_question:")
     p_emoji = PRIORITY_EMOJI.get(priority, ":grey_question:")
 
+    ticket_url = f"{settings.TRACKER_API_URL}/tasks/{ticket_id}/"
+
     blocks: list[dict] = [
         {
-            "type": "header",
+            "type": "section",
             "text": {
-                "type": "plain_text",
-                "text": f":ticket: {ticket_id} — {title}",
-                "emoji": True,
+                "type": "mrkdwn",
+                "text": f":ticket: <{ticket_url}|*{ticket_id}*> — {title}",
             },
         },
         {
