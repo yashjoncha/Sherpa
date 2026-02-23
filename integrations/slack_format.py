@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+from bs4 import BeautifulSoup
 from django.conf import settings
+
+
+def _strip_html(text: str) -> str:
+    """Convert HTML to plain text, turning block-level tags into newlines."""
+    soup = BeautifulSoup(text, "html.parser")
+    for tag in soup.find_all(["p", "div", "br", "li"]):
+        tag.insert_before("\n")
+    return soup.get_text().strip()
 
 STATUS_EMOJI = {
     "open": ":large_blue_circle:",
@@ -25,24 +34,27 @@ PRIORITY_EMOJI = {
 }
 
 
-def format_ticket_summary(title: str, status: str, priority: str) -> dict:
+def format_ticket_summary(title: str, status: str, priority: str, ticket_id: str = "") -> dict:
     """Format a single ticket as a Block Kit section.
 
     Args:
         title: The ticket title.
         status: Current ticket status.
         priority: Ticket priority level.
+        ticket_id: Optional ticket ID to render as a clickable link.
 
     Returns:
         A Block Kit section block dict.
     """
     s_emoji = STATUS_EMOJI.get(status, ":grey_question:")
     p_emoji = PRIORITY_EMOJI.get(priority, ":grey_question:")
+    ticket_url = f"{settings.TRACKER_API_URL}/tasks/{ticket_id}/"
+    id_part = f"<{ticket_url}|`{ticket_id}`> " if ticket_id else ""
     return {
         "type": "section",
         "text": {
             "type": "mrkdwn",
-            "text": f"*{title}*\n{s_emoji} {status.replace('_', ' ').title()}  {p_emoji} {priority.title()}",
+            "text": f"*{id_part}{title}*\n{s_emoji} {status.replace('_', ' ').title()}  {p_emoji} {priority.title()}",
         },
     }
 
@@ -82,6 +94,7 @@ def format_tickets_response(
                 title=ticket.get("title", "Untitled"),
                 status=ticket.get("status", "unknown"),
                 priority=ticket.get("priority", "unknown"),
+                ticket_id=ticket.get("id", ""),
             )
         )
     if total > max_shown:
@@ -175,13 +188,14 @@ def format_ticket_detail(ticket: dict) -> list[dict]:
     s_emoji = STATUS_EMOJI.get(status, ":grey_question:")
     p_emoji = PRIORITY_EMOJI.get(priority, ":grey_question:")
 
+    ticket_url = f"{settings.TRACKER_API_URL}/tasks/{ticket_id}/"
+
     blocks: list[dict] = [
         {
-            "type": "header",
+            "type": "section",
             "text": {
-                "type": "plain_text",
-                "text": f":ticket: {ticket_id} — {title}",
-                "emoji": True,
+                "type": "mrkdwn",
+                "text": f":ticket: <{ticket_url}|*{ticket_id}*> — {title}",
             },
         },
         {
@@ -200,7 +214,9 @@ def format_ticket_detail(ticket: dict) -> list[dict]:
         proj_name = (proj.get("title") or proj.get("name") or str(proj)) if isinstance(proj, dict) else str(proj)
         fields.append({"type": "mrkdwn", "text": f"*Project:* {proj_name}"})
     if ticket.get("sprint"):
-        fields.append({"type": "mrkdwn", "text": f"*Sprint:* {ticket['sprint']}"})
+        sprint = ticket["sprint"]
+        sprint_name = sprint.get("name", str(sprint)) if isinstance(sprint, dict) else str(sprint)
+        fields.append({"type": "mrkdwn", "text": f"*Sprint:* {sprint_name}"})
     if ticket.get("assignees"):
         assignee_list = ticket["assignees"]
         if isinstance(assignee_list, list):
@@ -228,10 +244,10 @@ def format_ticket_detail(ticket: dict) -> list[dict]:
         blocks.append({"type": "divider"})
         blocks.append({
             "type": "section",
-            "text": {"type": "mrkdwn", "text": ticket["description"]},
+            "text": {"type": "mrkdwn", "text": _strip_html(ticket["description"])},
         })
 
-    updates = ticket.get("updates", [])
+    updates = [u for u in ticket.get("updates", []) if u.get("message", "").strip()]
     if updates:
         blocks.append({"type": "divider"})
         blocks.append({
@@ -325,6 +341,7 @@ def format_stale_tickets(tickets: list[dict], days: int, max_shown: int = 20) ->
                 title=ticket.get("title", "Untitled"),
                 status=ticket.get("status", "unknown"),
                 priority=ticket.get("priority", "unknown"),
+                ticket_id=ticket.get("id", ""),
             )
         )
 
