@@ -1,13 +1,16 @@
 """Slack Bolt application with command handlers."""
 
+import json
 import logging
 import re
+from datetime import date, timedelta
 
 import httpx
 from django.conf import settings
 from slack_bolt import App
 
 from bot.assignee import build_candidate_profiles, build_suggestion_prompt, suggest_assignee
+from bot.handlers.bug_report import handle_bug_screenshot
 from bot.router import route
 from integrations.slack_format import (
     format_assignee_suggestion,
@@ -17,12 +20,15 @@ from integrations.slack_format import (
     format_no_tickets,
     format_stale_tickets,
     format_summary,
+    format_ticket_created,
     format_ticket_detail,
     format_tickets_response,
 )
 from integrations.tracker import (
     TrackerAPIError,
+    create_ticket,
     get_all_tickets,
+    get_projects,
     get_sprints,
     get_sprint_tickets,
     get_stale_tickets,
@@ -486,6 +492,137 @@ def handle_suggest_assignee(ack, respond, command):
 
 
 # ---------------------------------------------------------------------------
+# Bug report button actions
+# ---------------------------------------------------------------------------
+
+
+@app.action("create_bug_ticket")
+def handle_create_bug_ticket(ack, body, say):
+    """Create a ticket from a bug report analysis button click."""
+    ack()
+
+    try:
+        ticket_fields = json.loads(body["actions"][0]["value"])
+    except (KeyError, json.JSONDecodeError):
+        logger.error("Could not parse ticket_fields from button value")
+        say(":warning: Something went wrong. Could not read ticket data.")
+        return
+
+    title = ticket_fields.get("title", "Untitled Bug")
+    priority = ticket_fields.get("priority", "medium")
+    description = ticket_fields.get("description", "")
+    labels = ticket_fields.get("labels", [])
+
+    # Inline deadline logic (independent of complex.py)
+    deadline_days = {"critical": 3, "high": 5, "medium": 7, "low": 14}
+    days = deadline_days.get(priority, 7)
+    deadline = (date.today() + timedelta(days=days)).isoformat()
+
+    ticket_data = {
+        "title": title,
+        "description": description,
+        "priority": priority,
+        "external_deadline": deadline,
+        "story_points": 1,
+    }
+
+    if labels:
+        ticket_data["labels"] = labels
+
+    # Inline project resolution (independent of complex.py)
+    try:
+        projects = get_projects()
+        if projects:
+            ticket_data["project_id"] = projects[0].get("id")
+    except Exception:
+        logger.warning("Could not fetch projects for bug ticket; skipping")
+
+    # Auto-assign active sprint
+    try:
+        sprints = get_sprints()
+        active = next((s for s in sprints if s.get("status") == "active"), None)
+        if active:
+            ticket_data["sprint_id"] = active["id"]
+    except Exception:
+        logger.warning("Could not fetch sprints for bug ticket; skipping")
+
+    try:
+        ticket = create_ticket(ticket_data)
+    except Exception:
+        logger.exception("Failed to create bug ticket")
+        say(":warning: Failed to create the ticket. Please try again.")
+        return
+
+    say(blocks=format_ticket_created(ticket))
+
+
+@app.action("skip_bug_ticket")
+def handle_skip_bug_ticket(ack, body, say):
+    """Dismiss a bug report without creating a ticket."""
+    ack()
+    say(":thumbsup: Bug report dismissed. Let me know if you need anything else!")
+
+
+# ---------------------------------------------------------------------------
+# Image download helpers
+# ---------------------------------------------------------------------------
+
+_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+def _download_slack_file(file_info: dict) -> bytes | None:
+    """Download a file from Slack using the bot token.
+
+    Args:
+        file_info: A file dict from a Slack event's ``files`` array.
+
+    Returns:
+        Raw file bytes, or ``None`` if the download fails.
+    """
+    url = file_info.get("url_private_download") or file_info.get("url_private")
+    if not url:
+        return None
+    try:
+        resp = httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {settings.SLACK_BOT_TOKEN}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.content
+    except httpx.HTTPError:
+        logger.exception("Failed to download Slack file: %s", url)
+        return None
+
+
+def _get_image_from_event(event: dict) -> tuple[bytes | None, dict | None]:
+    """Check if a Slack event contains an image file and download it.
+
+    Returns:
+        Tuple of (image_bytes, file_info) or (None, None) if no image found.
+    """
+    files = event.get("files", [])
+    logger.debug(
+        "Image check — subtype=%s, files=%d, keys=%s",
+        event.get("subtype"),
+        len(files),
+        list(event.keys()),
+    )
+    if not files:
+        return None, None
+    for f in files:
+        mimetype = f.get("mimetype", "")
+        logger.debug("File found: name=%s, mimetype=%s", f.get("name"), mimetype)
+        if mimetype in _IMAGE_MIME_TYPES:
+            image_bytes = _download_slack_file(f)
+            if image_bytes:
+                logger.info("Image downloaded: %s (%d bytes)", f.get("name"), len(image_bytes))
+                return image_bytes, f
+            logger.warning("Image download failed for %s", f.get("name"))
+    return None, None
+
+
+# ---------------------------------------------------------------------------
 # Natural-language message / mention handlers
 # ---------------------------------------------------------------------------
 
@@ -499,6 +636,7 @@ def _handle_natural_message(text: str, user_id: str, say):
 @app.event("message")
 def handle_dm(event, say):
     """Handle direct messages and detect ticket-creation bot messages."""
+    logger.debug("handle_dm event: subtype=%s, has_files=%s", event.get("subtype"), "files" in event)
     text = event.get("text", "")
     subtype = event.get("subtype")
 
@@ -515,19 +653,34 @@ def handle_dm(event, say):
                 logger.exception("Auto-suggest failed for %s", ticket_id)
         return
 
-    # Ignore other non-standard message subtypes
-    if subtype:
+    # Allow file_share subtype through for image analysis
+    if subtype and subtype != "file_share":
         return
 
     user_id = event.get("user", "")
+
+    # Check for image attachments
+    image_bytes, _file_info = _get_image_from_event(event)
+    if image_bytes:
+        handle_bug_screenshot(image_bytes, text, user_id, say)
+        return
+
     _handle_natural_message(text, user_id, say)
 
 
 @app.event("app_mention")
 def handle_mention(event, say):
     """Handle @mentions of the bot in channels."""
+    logger.debug("handle_mention event: has_files=%s, keys=%s", "files" in event, list(event.keys()))
     text = event.get("text", "")
     user_id = event.get("user", "")
+
+    # Check for image attachments
+    image_bytes, _file_info = _get_image_from_event(event)
+    if image_bytes:
+        handle_bug_screenshot(image_bytes, text, user_id, say)
+        return
+
     _handle_natural_message(text, user_id, say)
 
 

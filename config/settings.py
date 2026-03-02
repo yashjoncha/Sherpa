@@ -117,6 +117,10 @@ LLM_MODEL_PATH = env(
 LLM_N_CTX = env.int("LLM_N_CTX", default=2048)
 LLM_N_THREADS = env.int("LLM_N_THREADS", default=2)
 
+# Florence-2 Vision
+FLORENCE2_MODEL_ID = env("FLORENCE2_MODEL_ID", default="microsoft/Florence-2-base")
+FLORENCE2_CACHE_DIR = env("FLORENCE2_CACHE_DIR", default=str(BASE_DIR / "models" / "florence2"))
+
 # RAG / FAISS
 FAISS_INDEX_DIR = env("FAISS_INDEX_DIR", default=str(BASE_DIR / "faiss_index"))
 RAG_EMBEDDING_MODEL = env("RAG_EMBEDDING_MODEL", default="all-MiniLM-L6-v2")
