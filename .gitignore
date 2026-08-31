@@ -29,9 +29,11 @@ media/
 *.swo
 *~
 
-# AI / Model files
-*.gguf
-faiss_index/
+# Logs
+*.log
+
+# Build artifacts
+*.vsix
 
 # OS
 .DS_Store

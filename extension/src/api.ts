@@ -1,0 +1,105 @@
+import * as vscode from "vscode";
+import { Ticket, Me, Member, Sprint, Project, CreateTicketPayload, SprintProgress } from "./tickets";
+
+async function getSession(): Promise<vscode.AuthenticationSession | undefined> {
+  return vscode.authentication.getSession("github", ["user:email"], {
+    createIfNone: true,
+  });
+}
+
+function getBaseUrl(): string {
+  const config = vscode.workspace.getConfiguration("sherpa");
+  return config.get<string>("apiUrl", "http://72.62.231.170:8000");
+}
+
+async function apiFetch(
+  path: string,
+  options: { method?: string; body?: unknown } = {}
+): Promise<any> {
+  const session = await getSession();
+  if (!session) {
+    throw new Error("Please sign in with GitHub.");
+  }
+
+  const url = `${getBaseUrl()}/api${path}`;
+  const init: RequestInit = {
+    method: options.method || "GET",
+    headers: {
+      Authorization: `Bearer ${session.accessToken}`,
+      "Content-Type": "application/json",
+    },
+  };
+  if (options.body !== undefined) {
+    init.body = JSON.stringify(options.body);
+  }
+
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error || `HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// ── Identity ─────────────────────────────────────────────────────────────
+
+export async function fetchMe(): Promise<Me> {
+  const data = await apiFetch("/vscode/me/");
+  return data.member;
+}
+
+// ── Tickets ──────────────────────────────────────────────────────────────
+
+export async function fetchMyTickets(project?: string): Promise<Ticket[]> {
+  const query = project ? `?project=${encodeURIComponent(project)}` : "";
+  const data = await apiFetch(`/vscode/my-tickets/${query}`);
+  return data.tickets ?? [];
+}
+
+export async function fetchTicketDetail(ticketId: string): Promise<Ticket> {
+  const data = await apiFetch(`/vscode/tickets/${ticketId}/`);
+  return data.ticket;
+}
+
+export async function updateTicket(
+  ticketId: string,
+  fields: Record<string, unknown>
+): Promise<Ticket> {
+  const data = await apiFetch(`/vscode/tickets/${ticketId}/`, {
+    method: "PUT",
+    body: fields,
+  });
+  return data.ticket;
+}
+
+export async function createTicket(payload: CreateTicketPayload): Promise<Ticket> {
+  const data = await apiFetch("/vscode/tickets/create/", {
+    method: "POST",
+    body: payload,
+  });
+  return data.ticket;
+}
+
+// ── Members & Sprints ────────────────────────────────────────────────────
+
+export async function fetchMembers(): Promise<Member[]> {
+  const data = await apiFetch("/vscode/members/");
+  return data.members ?? [];
+}
+
+export async function fetchSprints(): Promise<Sprint[]> {
+  const data = await apiFetch("/vscode/sprints/");
+  return data.sprints ?? [];
+}
+
+export async function fetchProjects(): Promise<Project[]> {
+  const data = await apiFetch("/vscode/projects/");
+  return data.projects ?? [];
+}
+
+// ── Sprint Progress ─────────────────────────────────────────────────────
+
+export async function fetchSprintProgress(): Promise<SprintProgress> {
+  return apiFetch("/vscode/sprint-progress/");
+}
