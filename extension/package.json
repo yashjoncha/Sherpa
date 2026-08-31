@@ -109,7 +109,7 @@
       "properties": {
         "sherpa.apiUrl": {
           "type": "string",
-          "default": "http://72.62.231.170:8000",
+          "default": "http://localhost:8001",
           "description": "Base URL of the Sherpa API server"
         }
       }

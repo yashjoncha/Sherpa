@@ -38,3 +38,11 @@ media/
 # OS
 .DS_Store
 Thumbs.db
+
+# Old/dead directories — do not track
+sherpa-vscode/
+models/
+faiss_index/
+.env.bak
+extension/node_modules/
+extension/out/

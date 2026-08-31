@@ -47,13 +47,7 @@ export class TicketProvider implements vscode.TreeDataProvider<TicketItem> {
   }
 
   async getChildren(): Promise<TicketItem[]> {
-    try {
-      const tickets = await fetchMyTickets(this._projectFilter);
-      return tickets.map((t) => new TicketItem(t));
-    } catch (err: any) {
-      vscode.window.showErrorMessage(`Sherpa: ${err.message}`);
-      return [];
-    }
+    return [];
   }
 }
 

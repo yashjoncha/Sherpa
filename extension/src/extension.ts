@@ -46,14 +46,11 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  autoDetectAndFilter();
-
-  // Re-detect when workspace folders change
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      autoDetectAndFilter();
-    })
-  );
+  // Auto-detect disabled — API not wired up
+  // autoDetectAndFilter();
+  // context.subscriptions.push(
+  //   vscode.workspace.onDidChangeWorkspaceFolders(() => autoDetectAndFilter())
+  // );
 
   context.subscriptions.push(
     // Refresh
